@@ -1,0 +1,14 @@
+
+data/
+.venv/
+.claude/
+
+# dbt project
+target/
+dbt_packages/
+logs/
+.env
+.DS_Store
+*.duckdb
+*.duckdb.wal
+.user.yml

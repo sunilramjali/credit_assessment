@@ -1,0 +1,99 @@
+version: 2
+
+sources:
+  - name: raw
+    description: "Read-only source tables from the YHP credit assessment SQLite database."
+
+    # Must match the `raw` attachment alias in profiles.yml.
+    database: raw
+
+    # SQLite exposes its tables through the main schema.
+    schema: main
+
+    tables:
+      - name: loans
+        description: >
+          One row per funded loan, containing the application date and
+          realised credit-loss outcomes.
+
+        columns:
+          - name: loan_id
+            description: "Unique loan identifier in the format LRQ-######."
+            data_tests:
+              - unique
+              - not_null
+
+          - name: received_date
+            description: >
+              Date the loan application was received. Stored as text in
+              SQLite and cast to DATE in the staging model.
+            data_tests:
+              - not_null
+
+          - name: is_loss
+            description: "1 if the loan experienced a material credit loss, otherwise 0."
+            data_tests:
+              - not_null
+              - accepted_values:
+                  arguments:
+                    values: [0, 1]
+
+          - name: loss_amount
+            description: >
+              Realised loss amount. Normally zero for paid-off loans,
+              although some slightly negative values may be present.
+
+
+      # `features` is the dbt source name.
+      # `loan_features` is the physical SQLite table name.
+      - name: features
+        identifier: loan_features
+        description: >
+          One row per funded loan containing loan_id and 99 anonymised
+          predictor variables.
+
+        columns:
+          - name: loan_id
+            description: "Unique loan identifier joining to raw.loans."
+            data_tests:
+              - unique
+              - not_null
+              - relationships:
+                  arguments:
+                    to: source('raw', 'loans')
+                    field: loan_id
+
+          - name: feat_001
+            description: >
+              Anonymised categorical feature. Stored as text in SQLite
+              and cast to VARCHAR in staging.
+
+          - name: feat_003
+            description: >
+              Anonymised categorical feature. Stored as text in SQLite
+              and cast to VARCHAR in staging.
+
+          - name: feat_004
+            description: >
+              Anonymised binary feature. Cast to BOOLEAN in staging.
+            data_tests:
+              - accepted_values:
+                  arguments:
+                    values: [0, 1]
+                  config:
+                    where: "feat_004 is not null"
+
+          - name: feat_015
+            description: >
+              Anonymised binary feature. Cast to BOOLEAN in staging.
+            data_tests:
+              - accepted_values:
+                  arguments:
+                    values: [0, 1]
+                  config:
+                    where: "feat_015 is not null"
+
+          - name: feat_041
+            description: >
+              Anonymised categorical feature. Stored as text in SQLite
+              and cast to VARCHAR in staging.

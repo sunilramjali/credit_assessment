@@ -3,10 +3,16 @@ credit_dbt:
   outputs:
     dev:
       type: duckdb
-      path: "{{ env_var('YHP_DUCKDB_PATH', 'credit.duckdb')}}"
+
+      path: "{{ env_var('YHP_DUCKDB_PATH', 'credit.duckdb') }}"
+
+      schema: main
       threads: 4
+
       extensions:
         - sqlite
+      
+      
       attach:
         - path: "{{ env_var('YHP_SQLITE_PATH', '../data/YHP_credit_assessment_DS.sqlite') }}"
           type: sqlite

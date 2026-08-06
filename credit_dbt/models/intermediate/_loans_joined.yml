@@ -1,0 +1,33 @@
+version: 2
+
+models:
+  - name: int_loans_joined
+    description: >
+      Loan outcomes joined one-to-one with their anonymised predictor features.
+      One row represents one funded loan.
+
+    columns:
+      - name: loan_id
+        description: "Unique business identifier for a funded loan."
+        data_tests:
+          - unique
+          - not_null
+
+      - name: received_date
+        description: "Date on which the loan application was received."
+        data_tests:
+          - not_null
+
+      - name: is_loss
+        description: "1 where the loan recorded a material credit loss; otherwise 0."
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [0, 1]
+
+      - name: loss_amount
+        description: >
+          Realised recorded loss amount. Values may be zero, positive or
+          occasionally negative.
+    

@@ -1,0 +1,168 @@
+version: 2
+
+models:
+  - name: mart_portfolio_yearly
+    description: >
+      Annual portfolio performance by loan origination year. One row represents
+      one origination year. This model supports analysis of funded-loan volume,
+      observed loss frequency and realised loss severity over time.
+
+    config:
+      materialized: table
+
+    columns:
+      - name: origination_year
+        description: "Calendar year in which the loan application was received."
+        data_tests:
+          - unique
+          - not_null
+
+      - name: funded_loan_count
+        description: "Number of distinct funded loans originated during the year."
+        data_tests:
+          - not_null
+
+      - name: loss_loan_count
+        description: "Number of loans where is_loss equals 1."
+        data_tests:
+          - not_null
+
+      - name: observed_loss_rate
+        description: >
+          Proportion of funded loans where is_loss equals 1. This is an
+          observed-to-date rate and does not adjust for loan maturity or
+          incomplete seasoning.
+        data_tests:
+          - not_null
+
+      - name: total_recorded_loss_amount
+        description: >
+          Sum of loss_amount across all loans, including zero and negative
+          recorded amounts.
+
+      - name: total_positive_loss_amount
+        description: >
+          Sum of positive loss_amount values only. Negative recoveries or
+          adjustments are excluded.
+
+      - name: average_loss_per_funded_loan
+        description: >
+          Average recorded loss amount across all funded loans in the
+          origination year.
+
+      - name: average_loss_severity
+        description: >
+          Mean loss_amount among loans where is_loss equals 1. Sensitive to
+          large loss observations and target inconsistencies.
+
+      - name: median_loss_severity
+        description: >
+          Median loss_amount among loans where is_loss equals 1. This is less
+          sensitive to extreme losses than average severity.
+
+      - name: maximum_loss_amount
+        description: "Largest recorded loss_amount in the origination year."
+
+
+  - name: mart_portfolio_seasonality
+    description: >
+      Monthly portfolio performance separated by origination year. One row
+      represents one calendar month within one origination year. This model
+      supports comparison of origination-month patterns across years.
+
+    config:
+      materialized: table
+
+    columns:
+      - name: origination_year_month_key
+        description: >
+          Unique year-month identifier in YYYY-MM format for the monthly
+          origination cohort.
+        data_tests:
+          - unique
+          - not_null
+
+      - name: origination_year
+        description: "Calendar year in which the loan application was received."
+        data_tests:
+          - not_null
+
+      - name: origination_month_number
+        description: >
+          Numeric calendar month from 1 for January through 12 for December.
+          This field should be used to sort origination_month_name.
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
+
+      - name: origination_month_name
+        description: >
+          Abbreviated calendar month name used as the x-axis label in the
+          seasonality chart.
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values:
+                  - Jan
+                  - Feb
+                  - Mar
+                  - Apr
+                  - May
+                  - Jun
+                  - Jul
+                  - Aug
+                  - Sep
+                  - Oct
+                  - Nov
+                  - Dec
+
+      - name: origination_month_start
+        description: >
+          First date of the origination month. This can be used for chronological
+          filtering and time-series visualisations.
+        data_tests:
+          - not_null
+
+      - name: funded_loan_count
+        description: >
+          Number of distinct funded loans received during the year-month cohort.
+        data_tests:
+          - not_null
+
+      - name: loss_loan_count
+        description: "Number of loans in the cohort where is_loss equals 1."
+        data_tests:
+          - not_null
+
+      - name: observed_loss_rate
+        description: >
+          Proportion of loans in the year-month cohort where is_loss equals 1.
+          This measures performance by month of origination, not month in which
+          the loss occurred.
+        data_tests:
+          - not_null
+
+      - name: total_recorded_loss_amount
+        description: >
+          Sum of loss_amount for the monthly origination cohort, including zero
+          and negative recorded amounts.
+
+      - name: total_positive_loss_amount
+        description: >
+          Sum of positive loss_amount values for the monthly origination cohort.
+
+      - name: average_loss_per_funded_loan
+        description: >
+          Average recorded loss amount across every funded loan in the monthly
+          origination cohort.
+
+      - name: average_loss_severity
+        description: >
+          Mean loss_amount among monthly cohort loans where is_loss equals 1.
+
+      - name: median_loss_severity
+        description: >
+          Median loss_amount among monthly cohort loans where is_loss equals 1.

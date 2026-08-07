@@ -6,6 +6,18 @@ models:
       Loan outcomes joined one-to-one with their anonymised predictor features.
       One row represents one funded loan.
 
+    data_tests:
+      # The join is a LEFT JOIN on loan_id. If loan_id were ever non-unique on
+      # the features side, the join would fan out silently: no error, more rows,
+      # and every downstream rate and total wrong. The source layer tests
+      # uniqueness before the join; this asserts the result after it.
+      #
+      # Checking the key and checking the outcome are not the same test. This is
+      # the one that fails if the join itself misbehaves.
+      - dbt_utils.equal_rowcount:
+          arguments:
+            compare_model: ref('stg_loans')
+
     columns:
       - name: loan_id
         description: "Unique business identifier for a funded loan."

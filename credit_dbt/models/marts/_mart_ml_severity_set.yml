@@ -1,0 +1,88 @@
+version: 2
+
+models:
+  - name: mart_ml_severity_set
+    description: >
+      Model-ready feature table for the loss_amount severity regression. One row
+      represents one loan that recorded a positive loss. 2,232 rows.
+
+      This is a separate model from mart_ml_training_set rather than a variation
+      of it, and the separation is the point. In the classifier, loss_amount is
+      a leak and is dropped. Here it is the target. Having to build a second
+      table is the friction that marks the moment the problem changes, and it is
+      what stops a feature in one model quietly becoming the answer in another.
+
+      The population is loans with loss_amount greater than zero. This models
+      severity, meaning the size of a loss given that a loss happened, which
+      pairs with the classifier's probability of a loss to give expected loss
+      per funded loan. Modelling loss_amount across all 10,000 loans instead
+      would make 75.67% of the target exactly zero and turn the exercise into a
+      zero-inflated problem that linear regression is the wrong tool for.
+
+      Note that this population is not the same as the classifier's positive
+      class. 2,232 loans have a positive loss amount while 2,119 carry the loss
+      flag, and only 2,099 are in both. The difference is the 153 known label
+      conflicts.
+
+      Rare-category grouping is deliberately not applied here, unlike in the
+      classifier mart. It is a fitted step, because it learns which categories
+      are common from the training rows, so it belongs inside the modelling
+      pipeline where it can be fitted on train alone.
+
+    config:
+      materialized: table
+
+    columns:
+      - name: loan_id
+        description: "Unique business identifier. Never used as a feature."
+        data_tests:
+          - unique
+          - not_null
+
+      - name: split
+        description: >
+          train for loans received before the cutoff, test for the rest. 1,781
+          train rows and 451 test rows. Mean loss is 28,750 in train against
+          39,250 in test, because severity rises across the period, so the test
+          set is harder than the training set.
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [train, test]
+
+      - name: loss_amount
+        description: >
+          Target variable. Always strictly positive by construction. Heavily
+          right-skewed, with a skewness of 3.55, a median of 19,189 and a
+          maximum of 440,332, so the notebook models log1p(loss_amount) and
+          converts errors back to currency for reporting.
+        data_tests:
+          - not_null
+          - dbt_utils.expression_is_true:
+              arguments:
+                expression: "> 0"
+
+      - name: received_date
+        description: >
+          Retained so errors can be analysed by vintage. Must not be used as a
+          predictor, because it defines the split.
+        data_tests:
+          - not_null
+
+      - name: is_loss
+        description: >
+          Retained for analysis only, never as a feature. True on 2,099 of the
+          2,232 rows; the 133 exceptions are loans that lost money while flagged
+          as no loss. It is the classifier's target, so using it here would mix
+          the two problems.
+        data_tests:
+          - not_null
+
+      - name: feat_001
+        description: >
+          Anonymised categorical feature, left ungrouped. 151 categories appear
+          in the training rows, only 23 of them with at least 20 loans. The
+          grouping is applied in the modelling pipeline, fitted on train only.
+        data_tests:
+          - not_null

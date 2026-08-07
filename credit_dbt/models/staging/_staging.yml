@@ -1,0 +1,96 @@
+version: 2
+
+models:
+  - name: stg_loans
+    description: >
+      Loan outcomes read from the attached SQLite file and typed once. One row
+      represents one funded loan.
+
+      The tests here are not duplicates of the source tests, even though they
+      name the same columns. The source tests assert facts about the SQLite
+      file, which this project does not control. These assert that the crossing
+      into DuckDB preserved them. A cast that silently produced NULLs, or a
+      change that dropped rows, would leave every source test green and fail
+      here.
+
+    config:
+      materialized: table
+
+    data_tests:
+      # Nothing filters in this model, so the row count must survive the hop
+      # from SQLite unchanged. This is the check that catches a failed cast or
+      # a stray WHERE clause added later.
+      - dbt_utils.equal_rowcount:
+          arguments:
+            compare_model: source('raw', 'loans')
+
+      # Every loan must have a feature row. The source layer already tests
+      # features -> loans; this is the other direction, and it is the one that
+      # matters for the join downstream. Without it, a loan with no features
+      # passes every test in the project and arrives in int_loans_joined as a
+      # row of 99 NULLs.
+      - relationships:
+          arguments:
+            to: ref('stg_loan_features')
+            field: loan_id
+          column_name: loan_id
+
+    columns:
+      - name: loan_id
+        description: "Unique business identifier, cast to VARCHAR."
+        data_tests:
+          - unique
+          - not_null
+
+      - name: received_date
+        description: >
+          Application date, cast from SQLite TEXT to DATE. The not_null test is
+          the guard on that cast: a value that failed to parse would arrive as
+          NULL and quietly drop out of every time-based mart.
+        data_tests:
+          - not_null
+
+      - name: is_loss
+        description: >
+          Cast from SQLite INTEGER to BOOLEAN. The source layer already
+          restricts the input to 0 and 1, so this only has to confirm the cast
+          produced a value.
+        data_tests:
+          - not_null
+
+      - name: loss_amount
+        description: >
+          Realised loss, cast to DECIMAL(12,2). Deliberately untested for
+          nullness: 4 loans genuinely have no amount, and asserting otherwise
+          would fail on correct data.
+
+
+  - name: stg_loan_features
+    description: >
+      The 99 anonymised predictor features, typed once on the way out of
+      SQLite. One row represents one funded loan.
+
+      SQLite stores feat_001, feat_003, feat_004, feat_015 and feat_041 as TEXT
+      and everything else as REAL, so all of them arrive in DuckDB as VARCHAR.
+      This model casts the five categoricals explicitly and everything else to
+      DOUBLE in one sweep.
+
+      Individual feature columns are not tested. They are anonymised with no
+      data dictionary, so there is no rule to assert about them, and inventing
+      one would be a test that exists to raise a number rather than to catch a
+      fault.
+
+    config:
+      materialized: table
+
+    data_tests:
+      - dbt_utils.equal_rowcount:
+          arguments:
+            compare_model: source('raw', 'features')
+
+    columns:
+      - name: loan_id
+        description: "Unique business identifier, joining to stg_loans."
+        data_tests:
+          - unique
+          - not_null

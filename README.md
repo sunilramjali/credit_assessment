@@ -7,7 +7,7 @@ Claude Code as a coding assistant — coding efficiency & debugging with the who
 in context — and ChatGPT for general research.
 
 **Live dashboard:** https://datastudio.google.com/s/taLG52JGGKY
-
+(Note: Make sure the filter is not selecting all)
 
 ## What this project is
 
@@ -77,7 +77,7 @@ forwards.
 
 ## What gets built
 
-Thirteen tables, in three layers. Each layer has one job.
+Fourteen tables, in three layers. Each layer has one job.
 
 ### Staging — clean the raw data, nothing more
 
@@ -105,7 +105,8 @@ Thirteen tables, in three layers. Each layer has one job.
 | `mart_loss_concentration` | 2,232 | Every loss-making loan, ranked biggest first, with cumulative totals. |
 | `mart_loss_concentration_summary` | 4 | Share of losses carried by the top 1%, 5%, 10% and 20% of loss-making loans. |
 | `mart_loss_severity_bands` | 5 | How losses spread across five size bands. |
-| `mart_ml_training_set` | 10,000 | Model-ready features for Part 2, with the train/test split and the leakage guards built in. |
+| `mart_ml_training_set` | 10,000 | Model-ready features for Part 2a, with the train/test split and the leakage guards built in. |
+| `mart_ml_severity_set` | 2,232 | Model-ready features for Part 2b. Only loans that lost money — here `loss_amount` is the target, not a leak. |
 
 ---
 
@@ -211,13 +212,33 @@ and it stops immediately if any test fails.
 A good run ends like this:
 
 ```
-Done. PASS=133 WARN=0 ERROR=0 SKIP=0 NO-OP=0 REUSED=0 TOTAL=133
+Done. PASS=154 WARN=0 ERROR=0 SKIP=0 NO-OP=0 REUSED=0 TOTAL=154
 ```
 
-**133 out of 133 passing is the expected result.** If you see any ERROR, do not
+**154 out of 154 passing is the expected result.** If you see any ERROR, do not
 use the output — something is wrong with the data or the code.
 
 The finished database is `credit_dbt/credit.duckdb`.
+
+### What the tests are checking
+
+Most of the 154 are ordinary column checks — is this unique, is it ever null, is
+it one of these allowed values. A handful do something different and are worth
+knowing about, because they catch faults that column checks cannot see:
+
+| Test | What breaks without it |
+|---|---|
+| Row counts match between each staging table and its source | A failed cast or a stray filter quietly dropping loans on the way out of SQLite |
+| Row count matches between `int_loans_joined` and `stg_loans` | The join fanning out and silently multiplying rows |
+| Every `loan_id` in `stg_loans` exists in `stg_loan_features` | A loan arriving with 99 empty feature columns |
+| `mart_portfolio_yearly` totals match the loans it was built from | A `GROUP BY` dropping a whole year while every column still looks fine |
+| Segment and band shares sum to 1 | A share calculated against the wrong denominator |
+| The concentration curve ends at exactly 1 | A window function ordered or framed wrongly |
+| The ML train/test split is chronological | A test loan leaking into the training period |
+
+The pattern: the ordinary tests ask whether a **column** is well formed. These
+ask whether the table still **adds up** to what it came from. A table can pass
+every column check and still be missing a year of loans.
 
 ---
 
@@ -440,6 +461,12 @@ or reconnect with `read_only=True`.
 That is the system working. Read which test failed — the name tells you the
 table, the column and the rule. Fix the cause, not the test.
 
+**A row-count test fails.**
+Something changed how many rows survive a step. Check for a filter added to a
+staging model, a cast that turned values into nulls, or a join key that stopped
+being unique. These tests exist because that kind of change raises no error on
+its own.
+
 ---
 
 ## Project layout
@@ -451,6 +478,7 @@ yhp_credit_assessment/
 │   │   ├── staging/         <- clean the raw data
 │   │   ├── intermediate/    <- join the tables
 │   │   └── marts/           <- the tables you use
+│   ├── tests/               <- checks that span whole tables
 │   ├── macros/              <- reusable SQL snippets
 │   ├── profiles.yml         <- database connection settings
 │   ├── dbt_project.yml      <- project settings
@@ -459,7 +487,10 @@ yhp_credit_assessment/
 ├── exploration/             <- notebook used to explore the raw data
 ├── exports/                 <- scripts that write the CSVs, and the CSVs
 ├── modelling/               <- Part 2
-│   ├── yhp_credit_classification.ipynb
+│   ├── yhp_credit_classification.ipynb   <- 2a: will it lose money?
+│   ├── yhp_credit_regression.ipynb       <- 2b: how much?
+│   ├── export_predictions.py             <- writes the results to CSV
+│   ├── predictions/                      <- the model results
 │   └── ml_methodology.md    <- why each modelling decision was made
 ├── requirements.txt
 └── README.md
@@ -473,15 +504,33 @@ the `.yml` — that is what it is for.
 
 ## Part 2 — the prediction model
 
-`modelling/yhp_credit_classification.ipynb` predicts `is_loss` and compares four
-classifiers. Run it after `dbt build`:
+Part 2 is two models, one for each half of the question a lender asks.
+
+| Notebook | Question | Target | Loans used |
+|---|---|---|---|
+| `yhp_credit_classification.ipynb` | Will this loan lose money? | `is_loss` | all 10,000 |
+| `yhp_credit_regression.ipynb` | How much will it lose? | `loss_amount` | the 2,232 that lost something |
+
+Multiplied together they give **expected loss per loan**, in money:
+
+```
+expected loss  =  P(loss)  x  average loss when it happens
+```
+
+Run them after `dbt build`:
 
 ```bash
 cd modelling
-jupyter notebook yhp_credit_classification.ipynb
+jupyter notebook yhp_credit_classification.ipynb    # about 10 minutes
+jupyter notebook yhp_credit_regression.ipynb        # about 1 minute
 ```
 
-It takes about ten minutes end to end. The SVM tuning is nearly all of that.
+The classification notebook is slow because of the SVM tuning.
+
+Why two separate tables feed them: in the classifier, `loss_amount` gives away
+the answer, so it is dropped. In the regression it **is** the answer. Keeping
+them apart means a column cannot quietly be a clue in one model and the answer
+in the other.
 
 The feature preparation is split across two places on purpose:
 
@@ -497,3 +546,39 @@ the split, in the notebook.
 
 `modelling/ml_methodology.md` records why each decision was made, what it costs,
 and the limitations of the result. Read that before quoting any score.
+
+### Getting the results out
+
+The notebooks show their results as tables and charts inside the cells. To get
+them as files you can chart or check without re-running anything:
+
+```bash
+cd modelling
+python export_predictions.py
+```
+
+This refits the tuned models at the settings the notebooks chose — it does not
+repeat the parameter searches — and writes four files into
+`modelling/predictions/`:
+
+| File | Rows | What it holds |
+|---|---|---|
+| `predictions_classification.csv` | 1,963 | One row per test loan: the actual outcome, both models' scores, and a risk decile. |
+| `predictions_regression.csv` | 451 | One row per loss-making test loan: actual loss, predicted loss, and the error. |
+| `model_comparison_classification.csv` | 4 | The metrics table for the four classifiers. |
+| `model_comparison_regression.csv` | 4 | The same for the regression models. |
+
+It takes about three minutes. Fitting the SVM is nearly all of it.
+
+These files live in `modelling/predictions/`, not `exports/`. That is
+deliberate: `exports/` holds dbt tables copied out unchanged for Looker, so
+anything in there can be traced straight back to a tested model. Model
+predictions are a different kind of thing — they depend on a fitted model, not
+just on the data — and mixing them in would break that guarantee.
+
+**The risk decile is the column worth looking at.** Decile 1 is the riskiest
+tenth of the test loans and 33.2% of them lost money; decile 10 is the safest
+and 12.1% did. That 2.7-times spread is what the model is actually good for.
+Its ROC-AUC of 0.61 sounds unimpressive, and it is modest, but ranking loans
+into deciles that differ this much is still useful for deciding where to look
+first.

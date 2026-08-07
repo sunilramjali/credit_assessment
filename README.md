@@ -77,7 +77,7 @@ forwards.
 
 ## What gets built
 
-Seven tables, in three layers. Each layer has one job.
+Thirteen tables, in three layers. Each layer has one job.
 
 ### Staging — clean the raw data, nothing more
 
@@ -105,6 +105,7 @@ Seven tables, in three layers. Each layer has one job.
 | `mart_loss_concentration` | 2,232 | Every loss-making loan, ranked biggest first, with cumulative totals. |
 | `mart_loss_concentration_summary` | 4 | Share of losses carried by the top 1%, 5%, 10% and 20% of loss-making loans. |
 | `mart_loss_severity_bands` | 5 | How losses spread across five size bands. |
+| `mart_ml_training_set` | 10,000 | Model-ready features for Part 2, with the train/test split and the leakage guards built in. |
 
 ---
 
@@ -210,10 +211,10 @@ and it stops immediately if any test fails.
 A good run ends like this:
 
 ```
-Done. PASS=124 WARN=0 ERROR=0 SKIP=0 NO-OP=0 REUSED=0 TOTAL=124
+Done. PASS=133 WARN=0 ERROR=0 SKIP=0 NO-OP=0 REUSED=0 TOTAL=133
 ```
 
-**124 out of 124 passing is the expected result.** If you see any ERROR, do not
+**133 out of 133 passing is the expected result.** If you see any ERROR, do not
 use the output — something is wrong with the data or the code.
 
 The finished database is `credit_dbt/credit.duckdb`.
@@ -457,6 +458,9 @@ yhp_credit_assessment/
 ├── data/                    <- the source SQLite file (not in git)
 ├── exploration/             <- notebook used to explore the raw data
 ├── exports/                 <- scripts that write the CSVs, and the CSVs
+├── modelling/               <- Part 2
+│   ├── yhp_credit_classification.ipynb
+│   └── ml_methodology.md    <- why each modelling decision was made
 ├── requirements.txt
 └── README.md
 ```
@@ -464,3 +468,32 @@ yhp_credit_assessment/
 Every `.sql` model has a `.yml` file beside it describing what each column
 means and which tests it must pass. If you want to know what a column is, read
 the `.yml` — that is what it is for.
+
+---
+
+## Part 2 — the prediction model
+
+`modelling/yhp_credit_classification.ipynb` predicts `is_loss` and compares four
+classifiers. Run it after `dbt build`:
+
+```bash
+cd modelling
+jupyter notebook yhp_credit_classification.ipynb
+```
+
+It takes about ten minutes end to end. The SVM tuning is nearly all of that.
+
+The feature preparation is split across two places on purpose:
+
+- **dbt** does the steps that are fixed rules — dropping `loss_amount`,
+  assigning the train/test split by date, grouping rare categories, turning
+  sentinel codes into nulls. These need no knowledge of the data, so they cannot
+  leak, and dbt can test them.
+- **The notebook** does the steps that must be *learned* from data — encoding,
+  filling gaps, scaling. All of these are fitted on the training rows only.
+
+The rule is: if a step has to learn something from the data, it happens after
+the split, in the notebook.
+
+`modelling/ml_methodology.md` records why each decision was made, what it costs,
+and the limitations of the result. Read that before quoting any score.

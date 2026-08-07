@@ -10,16 +10,18 @@ with loans as (
 
 ),
 
-monthly_summary as (
+quarterly_summary as (
 
     select
         extract(year from received_date)::integer as origination_year,
 
-        extract(month from received_date)::integer as origination_month_number,
+        extract(quarter from received_date)::integer as origination_quarter_number,
 
-        strftime(received_date, '%b') as origination_month_name,
+        'Q' || cast(
+            extract(quarter from received_date) as varchar
+        ) as origination_quarter_name,
 
-        date_trunc('month', received_date)::date as origination_month_start,
+        date_trunc('quarter', received_date)::date as origination_quarter_start,
 
         count(distinct loan_id) as funded_loan_count,
 
@@ -67,16 +69,13 @@ final as (
     select
         cast(origination_year as varchar)
             || '-'
-            || lpad(
-                cast(origination_month_number as varchar),
-                2,
-                '0'
-            ) as origination_year_month_key,
+            || origination_quarter_name
+            as origination_year_quarter_key,
 
         origination_year,
-        origination_month_number,
-        origination_month_name,
-        origination_month_start,
+        origination_quarter_number,
+        origination_quarter_name,
+        origination_quarter_start,
         funded_loan_count,
         loss_loan_count,
         observed_loss_rate,
@@ -86,7 +85,7 @@ final as (
         average_loss_severity,
         median_loss_severity
 
-    from monthly_summary
+    from quarterly_summary
 
 )
 
@@ -94,4 +93,4 @@ select *
 from final
 order by
     origination_year,
-    origination_month_number
+    origination_quarter_number

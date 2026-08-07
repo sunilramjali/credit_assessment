@@ -1,0 +1,209 @@
+version: 2
+
+models:
+  - name: mart_portfolio_kpis
+    description: >
+      Headline portfolio KPIs for the whole book, in long form. One row
+      represents one KPI. This model is the single place where the top-level
+      numbers quoted in the report are defined, so a figure shown on a slide
+      and a figure shown in a notebook cannot drift apart.
+
+      The model serves two audiences from one table. Filter on is_headline for
+      the small panel of numbers a reader should see first; read the whole table
+      for the supporting detail behind them.
+
+      Three separate totals for realised loss are published on purpose:
+      total_recorded_loss_amount is the headline figure and nets off recoveries,
+      total_positive_loss_amount ignores recoveries, and neither equals the sum
+      over is_loss-flagged rows because 133 loans lost money while flagged as no
+      loss. Publishing all three is what stops two readers quoting "total loss"
+      and getting different answers.
+
+      Unlike the time-trend marts, this model does not filter out rows with a
+      missing received_date. Coverage of the full 10,000 funded loans is the
+      point of a headline KPI, and the count of missing dates is itself
+      published as a data_quality KPI.
+
+      Note that no loan amount or exposure column exists in the source, so every
+      rate here is count-weighted: it measures the share of loans that went bad,
+      never the share of money lent that was lost.
+
+    config:
+      materialized: table
+
+    columns:
+      - name: kpi_name
+        description: >
+          Stable machine-readable name of the KPI. This is the natural key of
+          the model, so no surrogate key is generated. Dashboards should filter
+          on this value rather than on row position.
+        data_tests:
+          - unique
+          - not_null
+
+      - name: kpi_group
+        description: >
+          Reporting group the KPI belongs to. Used to lay KPI cards out in
+          sections: volume, loss frequency, loss severity, and data quality.
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values:
+                  - volume
+                  - frequency
+                  - severity
+                  - data_quality
+
+      - name: kpi_unit
+        description: >
+          How the value should be read and formatted. count is a whole number,
+          rate is a proportion from 0 to 1, rate_change is a difference between
+          two rates and may be negative, amount is a currency figure, and date
+          means the value is carried in kpi_value_text.
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values:
+                  - count
+                  - rate
+                  - rate_change
+                  - amount
+                  - date
+
+      - name: kpi_display_order
+        description: >
+          Fixed presentation order of the KPIs. Kept in the model so every
+          consumer shows the same numbers in the same sequence.
+        data_tests:
+          - unique
+          - not_null
+
+      - name: is_headline
+        description: >
+          True for the small set of KPIs that belong on a summary panel. The
+          selection deliberately spans all four groups, so the panel cannot
+          report volume and loss without also reporting the data-quality caveat
+          that qualifies them.
+        data_tests:
+          - not_null
+
+      - name: kpi_value
+        description: >
+          Numeric value of the KPI, cast to double so all units share one
+          column. Null only where kpi_unit is date.
+
+      - name: kpi_value_text
+        description: >
+          Text value of the KPI in YYYY-MM-DD form. Populated only where
+          kpi_unit is date, because a calendar date has no honest numeric
+          representation.
+
+    data_tests:
+      - dbt_utils.expression_is_true:
+          arguments:
+            expression: "kpi_value >= 0 and kpi_value <= 1"
+          config:
+            where: "kpi_unit = 'rate'"
+
+      - dbt_utils.expression_is_true:
+          arguments:
+            expression: "kpi_value >= -1 and kpi_value <= 1"
+          config:
+            where: "kpi_unit = 'rate_change'"
+
+      - dbt_utils.expression_is_true:
+          arguments:
+            expression: "(kpi_value is null) <> (kpi_value_text is null)"
+
+      - dbt_utils.expression_is_true:
+          arguments:
+            expression: "kpi_value >= 0"
+          config:
+            where: "kpi_unit = 'count'"
+
+
+  - name: mart_portfolio_kpis_wide
+    description: >
+      The same KPIs as mart_portfolio_kpis, pivoted to one row with one column
+      per KPI. Built for BI scorecards, which show a single field per card and
+      apply formatting per field rather than per row. The long model cannot
+      serve that, because every value there shares one kpi_value column and so
+      one number format.
+
+      This model computes nothing. It is a pure pivot of the long model, and
+      both loop over the same kpi_definitions() macro, so the two shapes always
+      hold the same KPIs with the same values. Read the long model's column
+      documentation for what each KPI means; this file documents only the ones
+      most likely to end up on a card.
+
+      Date KPIs arrive as real DATE columns here rather than the text they are
+      carried as in the long model, because a wide column has its own type and
+      can therefore afford one.
+
+    config:
+      materialized: table
+
+    columns:
+      - name: funded_loan_count
+        description: "Total funded loans in the book. Format as a plain number."
+        data_tests:
+          - not_null
+
+      - name: portfolio_loss_rate
+        description: >
+          Share of all funded loans that recorded a loss. A proportion from
+          0 to 1, so format as a percent. Counts loans, not money.
+        data_tests:
+          - not_null
+
+      - name: loss_rate_last_12_months
+        description: >
+          Loss rate over the final 12 months of the book. Pair this with
+          loss_rate_prior_12_months as a scorecard comparison metric.
+        data_tests:
+          - not_null
+
+      - name: loss_rate_prior_12_months
+        description: >
+          Loss rate over the 12 months before that window. Intended as the
+          comparison value for loss_rate_last_12_months.
+        data_tests:
+          - not_null
+
+      - name: loss_rate_12_month_change
+        description: >
+          loss_rate_last_12_months minus loss_rate_prior_12_months. May be
+          negative, so do not format this one as an unsigned percent.
+        data_tests:
+          - not_null
+
+      - name: total_recorded_loss_amount
+        description: >
+          Headline realised loss for the whole book, net of recoveries. Format
+          as currency.
+        data_tests:
+          - not_null
+
+      - name: average_loss_per_funded_loan
+        description: >
+          Total recorded loss spread across every funded loan, including the
+          ones that did not lose money. Format as currency.
+        data_tests:
+          - not_null
+
+      - name: average_loss_severity
+        description: >
+          Average loss on the loans that did lose money. Always larger than
+          average_loss_per_funded_loan. Format as currency.
+        data_tests:
+          - not_null
+
+      - name: duplicate_feature_vector_rate
+        description: >
+          Share of rows whose 99 feature values exactly match another row.
+          Belongs on the panel as a health warning next to the loss rate,
+          because every other KPI here is weighted by those repeats.
+        data_tests:
+          - not_null

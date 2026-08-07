@@ -1,0 +1,94 @@
+version: 2
+
+models:
+  - name: mart_categorical_feature_risk
+    description: >
+      Categorical portfolio and credit-risk analysis for selected anonymised
+      loan features. One row represents one category within one feature
+      and origination year.
+
+    columns:
+
+      - name: feature_category_key
+        description: >
+          Unique surrogate key identifying a feature, category, and
+          origination year combination.
+        data_tests:
+          - unique
+          - not_null
+
+      - name: feature_name
+        description: >
+          Name of the anonymised categorical predictor being analysed.
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values:
+                  - feat_001
+                  - feat_003
+                  - feat_004
+                  - feat_015
+                  - feat_041
+
+      - name: feature_value
+        description: >
+          Category value for the feature. Missing values are represented
+          explicitly as __NULL__ so missingness can itself be analysed
+          as a category.
+        data_tests:
+          - not_null
+
+      - name: origination_year
+        description: >
+          Calendar year in which the funded loan was received/originated.
+          Used to compare segment-level risk through time.
+        data_tests:
+          - not_null
+
+      - name: loan_count
+        description: >
+          Number of funded loans belonging to the feature category
+          within the origination year.
+        data_tests:
+          - not_null
+
+      - name: portfolio_share
+        description: >
+          Proportion of loans within the selected feature and origination
+          year belonging to this category. Values range from 0 to 1.
+
+      - name: loss_count
+        description: >
+          Number of loans in the category and origination year where
+          is_loss = 1.
+
+      - name: observed_loss_rate
+        description: >
+          Proportion of loans in the category and origination year where
+          is_loss = 1. This is the observed historical loss rate and should
+          not be interpreted as a modelled probability of default.
+
+      - name: average_loss_severity
+        description: >
+          Mean realised loss_amount among loans where is_loss = 1.
+          Measures average dollar severity conditional on an observed
+          loss event.
+
+      - name: total_observed_loss
+        description: >
+          Sum of loss_amount for loans where is_loss = 1 within the
+          category and origination year.
+
+      - name: observed_loss_per_loan
+        description: >
+          Total observed loss divided by all loans in the category and year.
+          Provides a combined view of loss frequency and severity.
+
+      - name: sufficient_sample_flag
+        description: >
+          True when the category contains at least 50 loans within the
+          origination year. Intended as a guardrail against over-interpreting
+          volatile loss rates from very small categories.
+        data_tests:
+          - not_null

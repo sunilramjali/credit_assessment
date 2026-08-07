@@ -66,17 +66,23 @@ models:
 
   - name: mart_portfolio_seasonality
     description: >
-      Monthly portfolio performance separated by origination year. One row
-      represents one calendar month within one origination year. This model
-      supports comparison of origination-month patterns across years.
+      Quarterly portfolio performance separated by origination year. One row
+      represents one calendar quarter within one origination year. This model
+      supports comparison of origination-quarter patterns across years.
+
+      The quarter grain is chosen over a monthly grain so that each cohort
+      carries enough loans for its observed loss rate to be readable. Loans are
+      unevenly spread across the calendar, and 2021 Q2 to Q4 contain no funded
+      loans at all, so those quarters are absent from this model rather than
+      present with a zero count.
 
     config:
       materialized: table
 
     columns:
-      - name: origination_year_month_key
+      - name: origination_year_quarter_key
         description: >
-          Unique year-month identifier in YYYY-MM format for the monthly
+          Unique year-quarter identifier in YYYY-Qn format for the quarterly
           origination cohort.
         data_tests:
           - unique
@@ -87,48 +93,42 @@ models:
         data_tests:
           - not_null
 
-      - name: origination_month_number
+      - name: origination_quarter_number
         description: >
-          Numeric calendar month from 1 for January through 12 for December.
-          This field should be used to sort origination_month_name.
+          Numeric calendar quarter from 1 for January to March through 4 for
+          October to December. This field should be used to sort
+          origination_quarter_name.
         data_tests:
           - not_null
           - accepted_values:
               arguments:
-                values: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
+                values: [1, 2, 3, 4]
 
-      - name: origination_month_name
+      - name: origination_quarter_name
         description: >
-          Abbreviated calendar month name used as the x-axis label in the
+          Short calendar quarter label used as the x-axis label in the
           seasonality chart.
         data_tests:
           - not_null
           - accepted_values:
               arguments:
                 values:
-                  - Jan
-                  - Feb
-                  - Mar
-                  - Apr
-                  - May
-                  - Jun
-                  - Jul
-                  - Aug
-                  - Sep
-                  - Oct
-                  - Nov
-                  - Dec
+                  - Q1
+                  - Q2
+                  - Q3
+                  - Q4
 
-      - name: origination_month_start
+      - name: origination_quarter_start
         description: >
-          First date of the origination month. This can be used for chronological
-          filtering and time-series visualisations.
+          First date of the origination quarter. This can be used for
+          chronological filtering and time-series visualisations.
         data_tests:
           - not_null
 
       - name: funded_loan_count
         description: >
-          Number of distinct funded loans received during the year-month cohort.
+          Number of distinct funded loans received during the year-quarter
+          cohort.
         data_tests:
           - not_null
 
@@ -139,30 +139,32 @@ models:
 
       - name: observed_loss_rate
         description: >
-          Proportion of loans in the year-month cohort where is_loss equals 1.
-          This measures performance by month of origination, not month in which
-          the loss occurred.
+          Proportion of loans in the year-quarter cohort where is_loss equals 1.
+          This measures performance by quarter of origination, not the quarter
+          in which the loss occurred.
         data_tests:
           - not_null
 
       - name: total_recorded_loss_amount
         description: >
-          Sum of loss_amount for the monthly origination cohort, including zero
-          and negative recorded amounts.
+          Sum of loss_amount for the quarterly origination cohort, including
+          zero and negative recorded amounts.
 
       - name: total_positive_loss_amount
         description: >
-          Sum of positive loss_amount values for the monthly origination cohort.
+          Sum of positive loss_amount values for the quarterly origination
+          cohort.
 
       - name: average_loss_per_funded_loan
         description: >
-          Average recorded loss amount across every funded loan in the monthly
+          Average recorded loss amount across every funded loan in the quarterly
           origination cohort.
 
       - name: average_loss_severity
         description: >
-          Mean loss_amount among monthly cohort loans where is_loss equals 1.
+          Mean loss_amount among quarterly cohort loans where is_loss equals 1.
 
       - name: median_loss_severity
         description: >
-          Median loss_amount among monthly cohort loans where is_loss equals 1.
+          Median loss_amount among quarterly cohort loans where is_loss
+          equals 1.

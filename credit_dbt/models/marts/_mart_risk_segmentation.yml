@@ -1,0 +1,213 @@
+version: 2
+
+models:
+  - name: mart_risk_segmentation
+    description: >
+      Loss outcomes for every category of every anonymised categorical feature,
+      measured over the whole book. One row represents one category within one
+      feature. This model answers which feature-defined segments have materially
+      different loss outcomes from the portfolio as a whole, and lets the five
+      features be compared against each other on the same measures.
+
+      The feature list comes from the categorical_features() macro, so a feature
+      added there appears here on the next build.
+
+      Every feature partitions the same 10,000 loans, so a loan appears once per
+      feature and the table holds five copies of the book. Always filter to a
+      single feature_name before reading counts or shares. Summing across
+      features counts every loan five times.
+
+      All features are anonymised. They must not be described as industry,
+      region, product, borrower type or anything else, because nothing in the
+      source says what they are. The analysis is descriptive and univariate: a
+      segment with a high loss rate is a segment worth investigating, not a
+      cause of loss. No control for any other feature is applied, so two
+      features that both look predictive may simply be measuring the same
+      underlying thing.
+
+      Three loss concepts are kept separate on purpose and must not be mixed.
+      The loss flag is the supplied is_loss and drives observed_loss_rate.
+      Recorded loss amount is the supplied loss_amount including zero and
+      negative values, and drives total_recorded_loss_amount. Positive loss
+      amount counts only loss_amount greater than zero, and drives every field
+      named positive. These populations genuinely differ: 2,119 loans carry the
+      loss flag while 2,232 loans have a positive loss amount, and only 2,099
+      are in both. Severity fields here use the positive-loss population, so
+      they are named accordingly rather than reusing average_loss_severity,
+      which in the other marts means the is_loss population.
+
+      Every category is kept, including ones with a handful of loans. Filtering
+      small categories out in SQL would hide the shape of the feature: 208 of
+      the 232 categories hold fewer than 100 loans, and knowing that the feature
+      is that sparse is itself a finding. is_material_segment lets a report
+      default to the categories that can support a rate while leaving the rest
+      reachable.
+
+    config:
+      materialized: table
+
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns:
+              - feature_name
+              - segment
+
+    columns:
+      - name: feature_name
+        description: >
+          Name of the anonymised categorical feature the segment belongs to.
+          Together with segment it forms the natural key of the model, so no
+          surrogate key is generated.
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values:
+                  - feat_001
+                  - feat_003
+                  - feat_004
+                  - feat_015
+                  - feat_041
+
+      - name: segment
+        description: >
+          A single category of the feature. Missing values are kept as the
+          explicit category __NULL__ rather than dropped, because whether a
+          value is absent may itself separate risk. Unique only within a
+          feature_name.
+        data_tests:
+          - not_null
+
+      - name: funded_loan_count
+        description: "Number of funded loans in the segment."
+        data_tests:
+          - not_null
+
+      - name: loss_loan_count
+        description: >
+          Number of loans in the segment where the supplied is_loss flag is
+          true. Not the same as the number of loans with a positive loss
+          amount.
+        data_tests:
+          - not_null
+
+      - name: positive_loss_loan_count
+        description: >
+          Number of loans in the segment where loss_amount is greater than
+          zero. Differs from loss_loan_count wherever the supplied flag and the
+          supplied amount disagree. It is published mainly as the denominator
+          of average_positive_loss_severity, so a report that groups several
+          segments together can divide summed loss by summed loans rather than
+          averaging segment averages.
+        data_tests:
+          - not_null
+
+      - name: observed_loss_rate
+        description: >
+          loss_loan_count divided by funded_loan_count. An observed historical
+          frequency, not a modelled probability of default, and not adjusted
+          for loan seasoning.
+
+          Both parts of this ratio are columns in this model, so a report
+          grouping segments together can recompute it correctly as summed
+          losses over summed loans. Never average this column across segments.
+        data_tests:
+          - not_null
+
+      - name: portfolio_loan_share
+        description: >
+          Segment loans as a share of all 10,000 funded loans. The denominator
+          is the whole book, so this sums to 1 within a feature_name and to 5
+          across the whole table. Filter to one feature before reading it.
+        data_tests:
+          - not_null
+
+      - name: total_recorded_loss_amount
+        description: >
+          Sum of the supplied loss_amount for the segment, including zero and
+          negative values. Negative amounts are treated as recoveries or
+          accounting adjustments and are not removed.
+
+      - name: total_positive_loss_amount
+        description: >
+          Sum of loss_amount for segment loans where loss_amount is greater
+          than zero. Recoveries do not reduce this figure.
+
+      - name: portfolio_positive_loss_share
+        description: >
+          Segment positive loss as a share of portfolio positive loss. Sums to
+          1 within a feature_name, as portfolio_loan_share does. Compare the
+          two: a segment holding a larger share of losses than of loans is
+          carrying more than its weight.
+
+      - name: average_loss_per_funded_loan
+        description: >
+          Recorded loss spread across every funded loan in the segment,
+          including those that lost nothing. Combines frequency and severity in
+          one number.
+
+      - name: average_positive_loss_severity
+        description: >
+          Mean loss_amount among segment loans with a positive loss amount.
+          Sensitive to single large losses, so read it beside the median.
+
+      - name: median_positive_loss_severity
+        description: >
+          Median loss_amount among segment loans with a positive loss amount.
+          Where this sits well below the mean, the segment's losses are driven
+          by a few severe cases rather than by typical ones.
+
+          This is the one column here that cannot be rolled up. A median of
+          medians is not a median, and no combination of columns in this model
+          recovers the true figure for a group of segments. Read it per segment
+          only; for a median across a group, go back to loan-level data.
+
+      - name: maximum_positive_loss_amount
+        description: "Largest single positive loss recorded in the segment."
+
+      - name: portfolio_loss_rate
+        description: >
+          Loss rate for the entire book, repeated on every row so a chart can
+          draw the benchmark line without a second query. Identical in all
+          rows.
+        data_tests:
+          - not_null
+
+      - name: loss_rate_difference_pp
+        description: >
+          observed_loss_rate minus portfolio_loss_rate, expressed in percentage
+          points. A segment at 30 percent against a portfolio at 22 percent
+          gives 8.0. This is not a percent change and must not be labelled as
+          one.
+        data_tests:
+          - not_null
+
+      - name: is_material_segment
+        description: >
+          True where the segment holds at least 100 loans. At 100 loans the
+          standard error of a rate near 21 percent is about 4 percentage
+          points, so smaller segments cannot support a rate at all. 24 of the
+          232 categories qualify, covering 6,521 loans.
+        data_tests:
+          - not_null
+
+      - name: risk_band
+        description: >
+          Transparent rule, not a clustering model. Segments below 100 loans
+          are Insufficient sample regardless of their rate, so a three-loan
+          category can never be labelled High risk. Above that, High risk is 5
+          or more percentage points above the portfolio rate, Low risk is 5 or
+          more below, and everything between is Portfolio-like. The 5 point
+          threshold is roughly a quarter of the 21.19 percent base rate and is
+          chosen to be stated in one sentence. It is triage for a chart legend,
+          not a significance test.
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values:
+                  - High risk
+                  - Portfolio-like
+                  - Low risk
+                  - Insufficient sample

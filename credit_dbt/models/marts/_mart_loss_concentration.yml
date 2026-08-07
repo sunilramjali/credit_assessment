@@ -1,0 +1,260 @@
+version: 2
+
+models:
+  - name: mart_loss_concentration
+    description: >
+      Every loan with a positive recorded loss, ranked from largest loss to
+      smallest, with running cumulative totals. One row represents one
+      loss-making loan. This model exists to draw a cumulative concentration
+      curve: plot cumulative_positive_loss_loan_share on the x axis against
+      cumulative_positive_loss_share on the y axis.
+
+      The population is loss_amount greater than zero, which is a different
+      population from is_loss being true. 2,232 loans have a positive loss
+      amount while 2,119 carry the loss flag, and only 2,099 are in both. The
+      concentration question is about how realised money is distributed, so the
+      money definition is the correct one here. Figures in this model will not
+      tie to the loss counts in the segmentation or time-trend marts, and that
+      is expected rather than an error.
+
+      Supplied values are never corrected. Zero and negative loss amounts are
+      excluded from this model because a share of a negative number is not
+      meaningful, but they remain intact upstream.
+
+      Ordering is deterministic: loss_amount descending with loan_id as the
+      tie-breaker. Without the tie-breaker, loans sharing a loss amount could
+      rank differently between builds and the curve would not reproduce.
+
+    config:
+      materialized: table
+
+    columns:
+      - name: loan_id
+        description: "Unique identifier of the loss-making loan."
+        data_tests:
+          - unique
+          - not_null
+
+      - name: received_date
+        description: "Date the loan application was received."
+        data_tests:
+          - not_null
+
+      - name: origination_year
+        description: >
+          Calendar year the loan was received. Available so a report can
+          restrict the curve to one vintage. Note that doing so recomputes
+          nothing: the cumulative columns are fixed against the whole
+          positive-loss population and will no longer reach 1 once filtered.
+        data_tests:
+          - not_null
+
+      - name: loss_amount
+        description: >
+          Supplied positive loss amount for the loan, exactly as given in the
+          source.
+        data_tests:
+          - not_null
+
+      - name: loss_rank
+        description: >
+          Rank from 1 for the largest positive loss. Ties are broken by
+          loan_id.
+        data_tests:
+          - unique
+          - not_null
+
+      - name: positive_loss_loan_count
+        description: >
+          Total number of loans with a positive loss amount. Identical on every
+          row; it is the denominator of the loan share column.
+        data_tests:
+          - not_null
+
+      - name: cumulative_positive_loss_loan_count
+        description: >
+          Number of loans counted so far, working down from the largest loss.
+          Equal to loss_rank by construction, kept separately because a chart
+          axis reads better as a count than as a rank.
+        data_tests:
+          - not_null
+
+      - name: cumulative_positive_loss_loan_share
+        description: >
+          Cumulative share of loss-making loans covered so far. The x axis of
+          the concentration curve. Runs from near 0 to exactly 1.
+        data_tests:
+          - not_null
+
+      - name: portfolio_positive_loss_amount
+        description: >
+          Total positive loss across the whole book. Identical on every row; it
+          is the denominator of the loss share column.
+        data_tests:
+          - not_null
+
+      - name: cumulative_positive_loss_amount
+        description: >
+          Running total of loss_amount, working down from the largest loss.
+        data_tests:
+          - not_null
+
+      - name: cumulative_positive_loss_share
+        description: >
+          Cumulative share of total positive loss accounted for so far. The y
+          axis of the concentration curve. Runs from near 0 to exactly 1.
+        data_tests:
+          - not_null
+
+
+  - name: mart_loss_concentration_summary
+    description: >
+      Headline concentration figures at four thresholds. One row represents one
+      threshold. This is a separate model rather than extra columns on the
+      loan-level mart because the two have different grains: four threshold
+      values repeated across 2,232 loan rows would be summed by any reporting
+      tool that treats them as measures, producing a number 2,232 times too
+      large. Keeping one grain per table is what prevents that.
+
+      The cutoff uses ceil rather than a cumulative-share filter. ceil answers
+      the question "the smallest set of largest loans covering at least this
+      share of loans", which is what a phrase like "the top 1 percent" normally
+      means. It always returns at least one loan and always yields a whole loan
+      count that can be stated exactly. Selecting only rows whose cumulative
+      share stays strictly below the threshold would under-cover every band and
+      could return an empty set on a small population.
+
+    config:
+      materialized: table
+
+    columns:
+      - name: top_share_threshold
+        description: >
+          Share of loss-making loans in the top group: 0.01, 0.05, 0.10 or
+          0.20.
+        data_tests:
+          - unique
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [0.01, 0.05, 0.10, 0.20]
+
+      - name: positive_loss_loan_count
+        description: >
+          Number of loans in the top group, computed as ceil of the population
+          multiplied by the threshold.
+        data_tests:
+          - not_null
+
+      - name: positive_loss_loan_population
+        description: >
+          Total loans with a positive loss amount. The denominator behind
+          actual_loan_share.
+        data_tests:
+          - not_null
+
+      - name: actual_loan_share
+        description: >
+          Share of loss-making loans the group actually covers. Slightly above
+          top_share_threshold because ceil rounds up to a whole loan. Quote
+          this rather than the threshold when precision matters.
+        data_tests:
+          - not_null
+
+      - name: loss_amount
+        description: "Total positive loss carried by the top group."
+        data_tests:
+          - not_null
+
+      - name: loss_share
+        description: >
+          The headline number: the share of all positive loss carried by this
+          group of largest losses.
+        data_tests:
+          - not_null
+
+
+  - name: mart_loss_severity_bands
+    description: >
+      Distribution of positive losses across five size bands. One row
+      represents one band. Supports a severity histogram and the supporting
+      table beside the concentration curve.
+
+      Only positive loss amounts are banded. Upper bounds are exclusive, so a
+      loss of exactly 25,000 falls in the 25k-50k band. Bands carry no currency
+      symbol because the source does not state a currency.
+
+      Shares here are fixed against the whole positive-loss population rather
+      than computed inside a report. A reporting tool's own percent-of-total
+      recalculates against whatever filter is active, so the same column would
+      silently change meaning when a user filtered to one year. Fixing the
+      denominator in the model means the number always answers the same
+      question.
+
+    config:
+      materialized: table
+
+    columns:
+      - name: severity_band
+        description: "Loss size band label, with an exclusive upper bound."
+        data_tests:
+          - unique
+          - not_null
+          - accepted_values:
+              arguments:
+                values:
+                  - 0-10k
+                  - 10k-25k
+                  - 25k-50k
+                  - 50k-100k
+                  - 100k+
+
+      - name: severity_band_order
+        description: >
+          Numeric sort key from 1 to 5. Use this to order the bands, because
+          the labels sort wrongly as text.
+        data_tests:
+          - unique
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [1, 2, 3, 4, 5]
+
+      - name: loan_count
+        description: "Number of loss-making loans falling in the band."
+        data_tests:
+          - not_null
+
+      - name: positive_loss_loan_share
+        description: >
+          Band loans as a share of all loss-making loans. Sums to 1 across the
+          model.
+        data_tests:
+          - not_null
+
+      - name: total_positive_loss_amount
+        description: "Total positive loss contributed by the band."
+        data_tests:
+          - not_null
+
+      - name: positive_loss_amount_share
+        description: >
+          Band loss as a share of total positive loss. Sums to 1 across the
+          model. Read beside positive_loss_loan_share: where the amount share
+          far exceeds the loan share, a small number of loans is carrying the
+          band.
+        data_tests:
+          - not_null
+
+      - name: average_positive_loss
+        description: "Mean positive loss within the band."
+        data_tests:
+          - not_null
+
+      - name: median_positive_loss
+        description: >
+          Median positive loss within the band. Close to the mean inside a
+          narrow band, which is the point: banding removes most of the skew
+          that makes the portfolio-level mean hard to read.
+        data_tests:
+          - not_null

@@ -24,6 +24,7 @@ expected loss per loan  =  P(loss)  ×  E[loss | loss]
 - [Pipeline architecture](#pipeline-architecture)
 - [Part 2a — classification](#part-2a--classification)
 - [Part 2b — regression](#part-2b--regression)
+- [Inference function](#inference-function)
 - [Results](#results)
 - [Limitations](#limitations)
 - [Next steps](#next-steps)
@@ -270,7 +271,44 @@ Ridge suits this data: seven feature pairs correlate above 0.98, one at exactly
 other. Lasso contributes differently, driving 89 of 167 coefficients to zero,
 which is useful selection across 113 numeric columns with no data dictionary.
 
-### 14. Expected loss combined at portfolio level
+### 14. Inference function returns a calibrated probability, so it uses Logistic Regression
+
+The brief asks the inference function to return "the probability of default and
+the predicted dollar loss" given a `loan_id`.
+
+SVM scored marginally higher on ROC-AUC (0.6112 against 0.6104) but its
+`decision_function` returns a signed distance, not a probability. The function is
+contracted to return a probability and the brief asks for discipline around
+calibration, so `inference.py` uses Logistic Regression. The two models are
+separated by 0.0008 ROC-AUC, which is noise; nothing is given up.
+
+Nothing is re-fitted at prediction time. `build_artifacts()` fits the encoder,
+imputer, scaler and both estimators on the training rows and serialises them
+together with `joblib`. Re-fitting any of them against a new batch would change
+the medians and scaling factors and shift every prediction, with no error raised.
+
+### 15. Severity predictions are clipped to the fitted range
+
+The severity model is fitted on 1,781 loss-making loans. Asked about a loan
+outside that population it answers a counterfactual — how much this would have
+lost, had it lost — from outside the domain it was trained on.
+
+Ridge is linear and extrapolates without limit. One test loan carries
+`feat_010` = 255,428 against a severity-training mean of 1,403 and standard
+deviation of 2,568: 120 standard deviations out. Before clipping, that produced a
+predicted loss of $86 billion. At the other extreme the raw log-scale predictions
+reach −1,994,306.
+
+Predictions are therefore clipped to the range of `log1p(loss_amount)` seen in
+training, and the response carries `severity_clipped` and
+`severity_in_population` flags so a caller can tell a clamped figure from an
+estimate.
+
+The clip is rare: 0.6% of out-of-population loans and 0.1% of in-population
+loans. Mean predicted severity is consistent across both paths, $22,541 and
+$20,378, which suggests the model behaves normally away from the extremes.
+
+### 16. Expected loss combined at portfolio level
 
 P(loss) × E[loss | loss], using the classifier's test base rate and the severity
 model's mean prediction.
@@ -287,6 +325,61 @@ shortfall. The cause is the back-transform: `expm1` of a mean prediction is not
 the mean of the predictions, so estimates are pulled towards the middle and the
 large losses that drive the portfolio total are under-predicted. A smearing
 correction is the standard remedy and is in [next steps](#next-steps).
+
+---
+
+## Inference function
+
+`inference.py` implements the deliverable the brief asks for: given a `loan_id`,
+pull that loan's feature vector, run it through both models, and return the
+probability of default and the predicted dollar loss.
+
+```python
+from inference import predict
+
+predict("LRQ-100067")
+{'loan_id': 'LRQ-100067',
+ 'probability_of_default': 0.29365,
+ 'predicted_loss_given_default': 16945.21,
+ 'expected_loss_usd': 4975.97,
+ 'received_date': '2019-03-07',
+ 'data_split': 'train',
+ 'scored_on_training_data': True,
+ 'severity_in_population': True,
+ 'severity_clipped': False}
+```
+
+Also available from the command line:
+
+```bash
+python inference.py --build              # fit and serialise, ~5 seconds
+python inference.py LRQ-100067 --json
+```
+
+Latency is around 20 ms per call once the artefacts are loaded, since the models
+and both feature tables are cached in memory after the first request.
+
+### Returned fields
+
+`predicted_loss_given_default` is severity conditional on a loss, because that is
+what the regression models. `expected_loss_usd` is the product of the two, which
+is the unconditional figure. Both are returned rather than one, because "the
+predicted dollar loss" is ambiguous between them and the caller should not have
+to guess which they have.
+
+The last four fields exist so a caller can judge how much to trust the numbers.
+`scored_on_training_data` is true for loans the models were fitted on, where the
+prediction is optimistic. `severity_in_population` and `severity_clipped` are
+explained in decision 15.
+
+### Assumptions
+
+The function reads feature vectors from `mart_ml_training_set` and
+`mart_ml_severity_set`, so it scores loans already in the warehouse. A genuinely
+new loan would need the dbt preparation rules — the sentinel thresholds, the rare
+category grouping, the dropped target — restated in Python, and the two
+implementations could then drift. Keeping the rules in one place and running new
+loans through dbt first would be the production answer.
 
 ---
 

@@ -9,6 +9,11 @@ in context — and ChatGPT for general research.
 **Live dashboard:** https://datastudio.google.com/s/taLG52JGGKY
 (Note: Make sure the filter is not selecting all)
 
+**Part 1 write-up:** [`part1_credit_risk_analysis.pdf`](part1_credit_risk_analysis.pdf)
+— the three findings, the data-quality section, and what each one means for a
+small-business lender. Six pages. Every figure in it comes from a tested mart in
+this repo.
+
 ## What this project is
 
 This project takes a raw loan dataset and turns it into a small set of clean,
@@ -77,7 +82,7 @@ forwards.
 
 ## What gets built
 
-Fourteen tables, in three layers. Each layer has one job.
+Thirteen tables, in three layers. Each layer has one job.
 
 ### Staging — clean the raw data, nothing more
 
@@ -100,7 +105,6 @@ Fourteen tables, in three layers. Each layer has one job.
 | `mart_portfolio_kpis_wide` | 1 | The same numbers, one row, one column each. Use this one for BI dashboards. |
 | `mart_portfolio_yearly` | 8 | How the portfolio performed each year. |
 | `mart_portfolio_seasonality` | 28 | The same, split by quarter within each year. |
-| `mart_categorical_feature_risk` | 1,420 | Loss rate for each category of each categorical feature, by year. |
 | `mart_risk_segmentation` | 295 | Loss outcomes per category of all 5 categorical features, all-time, against the portfolio benchmark. |
 | `mart_loss_concentration` | 2,232 | Every loss-making loan, ranked biggest first, with cumulative totals. |
 | `mart_loss_concentration_summary` | 4 | Share of losses carried by the top 1%, 5%, 10% and 20% of loss-making loans. |
@@ -212,17 +216,17 @@ and it stops immediately if any test fails.
 A good run ends like this:
 
 ```
-Done. PASS=154 WARN=0 ERROR=0 SKIP=0 NO-OP=0 REUSED=0 TOTAL=154
+Done. PASS=145 WARN=0 ERROR=0 SKIP=0 NO-OP=0 REUSED=0 TOTAL=145
 ```
 
-**154 out of 154 passing is the expected result.** If you see any ERROR, do not
+**145 out of 145 passing is the expected result.** If you see any ERROR, do not
 use the output — something is wrong with the data or the code.
 
 The finished database is `credit_dbt/credit.duckdb`.
 
 ### What the tests are checking
 
-Most of the 154 are ordinary column checks — is this unique, is it ever null, is
+Most of the 145 are ordinary column checks — is this unique, is it ever null, is
 it one of these allowed values. A handful do something different and are worth
 knowing about, because they catch faults that column checks cannot see:
 
@@ -252,7 +256,6 @@ python exports/export_mart_kpis.py
 python exports/export_mart_kpis_wide.py
 python exports/export_mart_yearly.py
 python exports/export_mart_season.py
-python exports/export_mart_categorical.py
 python exports/export_mart_segmentation.py
 python exports/export_mart_concentration.py
 python exports/export_mart_concentration_summary.py
@@ -489,7 +492,9 @@ yhp_credit_assessment/
 ├── modelling/               <- Part 2
 │   ├── yhp_credit_classification.ipynb   <- 2a: will it lose money?
 │   ├── yhp_credit_regression.ipynb       <- 2b: how much?
+│   ├── inference.py                      <- score a loan by loan_id
 │   ├── export_predictions.py             <- writes the results to CSV
+│   ├── artifacts/                        <- the fitted models
 │   ├── predictions/                      <- the model results
 │   └── ml_methodology.md    <- why each modelling decision was made
 ├── requirements.txt
@@ -546,6 +551,42 @@ the split, in the notebook.
 
 `modelling/ml_methodology.md` records why each decision was made, what it costs,
 and the limitations of the result. Read that before quoting any score.
+
+### Scoring a loan
+
+The brief asks for an inference function: give it a `loan_id`, get back the
+probability of default and the predicted dollar loss.
+
+```bash
+cd modelling
+python inference.py --build          # fit and save the models, once, ~5 seconds
+python inference.py LRQ-100067
+```
+
+Or from Python:
+
+```python
+from inference import predict
+
+predict("LRQ-100067")
+{'loan_id': 'LRQ-100067',
+ 'probability_of_default': 0.29365,
+ 'predicted_loss_given_default': 16945.21,   # USD, if it does default
+ 'expected_loss_usd': 4975.97,               # probability x the line above
+ ...}
+```
+
+Nothing is re-fitted when you call `predict`. The models and all the fitted
+preprocessing are saved once by `--build` and loaded from disk, so a call takes
+about 20 milliseconds. Re-fitting on each call would change the fill values and
+scaling and quietly move every prediction.
+
+Two fields in the response are warnings rather than results.
+`scored_on_training_data` is true for loans the models learned from, where the
+prediction flatters itself. `severity_clipped` is true when the dollar figure had
+to be capped because the loan sat outside the range the severity model was
+trained on — it happens to about 0.6% of loans, and without the cap those
+predictions run to absurd values.
 
 ### Getting the results out
 

@@ -28,14 +28,14 @@ banded as (
             else 5
         end as severity_band_order,
 
-        -- Bands are labelled without a currency symbol because the source does
-        -- not state a currency. Upper bounds are exclusive.
+        -- The assessment brief states loss_amount is in USD, so bands carry the
+        -- symbol. Upper bounds are exclusive.
         case
-            when loss_amount < 10000 then '0-10k'
-            when loss_amount < 25000 then '10k-25k'
-            when loss_amount < 50000 then '25k-50k'
-            when loss_amount < 100000 then '50k-100k'
-            else '100k+'
+            when loss_amount < 10000 then '$0-10k'
+            when loss_amount < 25000 then '$10k-25k'
+            when loss_amount < 50000 then '$25k-50k'
+            when loss_amount < 100000 then '$50k-100k'
+            else '$100k+'
         end as severity_band
 
     from positive_loss_loans

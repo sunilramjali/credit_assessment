@@ -181,8 +181,8 @@ models:
       table beside the concentration curve.
 
       Only positive loss amounts are banded. Upper bounds are exclusive, so a
-      loss of exactly 25,000 falls in the 25k-50k band. Bands carry no currency
-      symbol because the source does not state a currency.
+      loss of exactly 25,000 falls in the $25k-50k band. Amounts are in USD, as
+      stated in the assessment brief.
 
       Shares here are fixed against the whole positive-loss population rather
       than computed inside a report. A reporting tool's own percent-of-total
@@ -203,11 +203,11 @@ models:
           - accepted_values:
               arguments:
                 values:
-                  - 0-10k
-                  - 10k-25k
-                  - 25k-50k
-                  - 50k-100k
-                  - 100k+
+                  - $0-10k
+                  - $10k-25k
+                  - $25k-50k
+                  - $50k-100k
+                  - $100k+
 
       - name: severity_band_order
         description: >

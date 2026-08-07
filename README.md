@@ -1,231 +1,252 @@
-# YHP Credit Assessment
+# YHP Credit Risk Assessment
 
-I started this project in a Jupyter notebook, exploring the raw data
-to see what was actually in it. Once I understood the data, I decided on the
-architecture and the method, and then built the pipeline. Along the way I used
-Claude Code as a coding assistant — coding efficiency & debugging with the whole project
-in context — and ChatGPT for general research.
+This repository contains an end-to-end credit risk analysis of an anonymised small-business lending portfolio. It was developed for the **YH & Partners Data Science Take-Home Assessment: Credit Risk — Default & Loss**.
 
-**Live dashboard:** https://datastudio.google.com/s/taLG52JGGKY
-(Note: Make sure the filter is not selecting all)
+The work is split into two parts:
 
-**Part 1 write-up:** [`part1_credit_risk_analysis.pdf`](part1_credit_risk_analysis.pdf)
-— three findings, a data-quality section, and what each means for a
-small-business lender. Six pages. Every figure comes from a tested mart in this
-repo.
+1. **Analytics and data engineering** — profile the portfolio, identify three business-relevant findings, surface data-quality issues, and build repeatable transformations.
+2. **Predictive modelling** — estimate the probability that a funded loan ends in loss and the size of the loss when it occurs, then expose those predictions through a small inference function.
 
-## What this project is
+The analytical pipeline is built with **dbt** and **DuckDB**. Initial exploration is carried out in Python, and the published Part 1 charts are produced in **Looker Studio** from exported dbt marts.
 
-A raw loan dataset turned into a set of clean, tested tables that answer
-credit-risk questions.
+## Links
 
-The source is one SQLite file with two tables: 10,000 funded loans with their
-outcomes, and 99 anonymised features describing each loan. The loans were
-received between **2018-04-11 and 2025-12-18**, and **21.19%** ended in a
-recorded loss. Amounts are in USD.
-
-Questions the project answers:
-
-- How much are we losing, and how often?
-- Is the loss rate getting better or worse over time?
-- Are some kinds of loan riskier than others?
-- Can the data be trusted?
-
-Built with **dbt** and **DuckDB**. dbt writes the SQL and runs the tests. DuckDB
-is the database and reads the SQLite file directly, so there is no separate
-import step and no second copy of the data to keep in sync.
-
-Every published number comes from a tested table. If a number is wrong, a test
-fails and the build stops.
+- **Live dashboard:** https://datastudio.google.com/s/taLG52JGGKY  
+  Check the dashboard filter selections before interpreting a chart; the current view is not intended to be read with all filter values selected.
+- **Part 1 report:** [`part1_credit_risk_analysis.pdf`](part1_credit_risk_analysis.pdf)
+- **Modelling methodology:** [`modelling/ml_methodology.md`](modelling/ml_methodology.md)
 
 ---
 
-## How the project fits together
+## Project objective
 
-```
-   ┌─────────────┐      ┌──────────────────┐      ┌────────────────┐
-   │  NOTEBOOK   │ ───► │  dbt  +  DuckDB  │ ───► │ LOOKER STUDIO  │
-   │             │      │                  │      │                │
-   │   explore   │      │  build  &  test  │      │      show      │
-   └─────────────┘      └──────────────────┘      └────────────────┘
-    exploration/           credit_dbt/               exports/*.csv
-     one-off,              repeatable,               read-only,
-     throwaway             tested                    no logic
-```
+The source data contains funded-loan outcomes and 99 anonymised predictors. The project turns those raw tables into a reproducible analytical layer that can answer four practical questions:
 
-**1. Notebook.** `exploration/yhp_credit_exploration.ipynb` opens the raw SQLite
-file and profiles it: what columns exist, what is missing, what looks wrong.
-None of it is part of the pipeline and none of it needs to run again.
+- How often does the portfolio experience a recorded credit loss?
+- How large are those losses?
+- Has portfolio risk changed over time or across borrower/loan segments?
+- Are the data and model outputs reliable enough to support further analysis?
 
-**2. dbt + DuckDB.** Whatever the notebook established gets written as a model in
-`credit_dbt/`. dbt builds the tables in layers (staging → intermediate → marts)
-and runs a test after each one. This is the only place a number is calculated.
+Part 2 then uses the same prepared data to answer two predictive questions:
 
-**3. Looker Studio.** The marts are exported to CSV and uploaded to Looker, which
-draws the charts. Looker performs no calculation: no custom formulas, no blended
-fields, no filters that change a number. A wrong figure on a dashboard is fixed
-in a dbt model, not in Looker.
+- **Will this loan end in a loss?**
+- **If it does, how large is the loss likely to be?**
 
-Calculation happens in one place only.
+The two predictions can be combined into an expected-loss estimate for each loan.
 
 ---
 
-## What gets built
+## Data
 
-Thirteen tables across three layers.
+The source is a single SQLite database containing two tables and **10,000 funded loans** originated between **11 April 2018 and 18 December 2025**.
+
+| Source table | Contents |
+|---|---|
+| `loans` | `loan_id`, `received_date`, `is_loss`, `loss_amount` |
+| `loan_features` | `loan_id` plus 99 anonymised predictors |
+
+The portfolio's recorded `is_loss` rate is **21.19%**. Amounts are denominated in **USD**.
+
+The two modelling targets are:
+
+- `is_loss`: binary indicator of whether the loan recorded a material credit loss or charge-off.
+- `loss_amount`: realised dollar loss. The source includes some zero, negative, missing, and target-inconsistent values; these are reported as data-quality issues rather than silently corrected.
+
+Because the predictors are anonymised, the analysis can identify statistically different risk groups but cannot assign a business meaning to most feature names.
+
+---
+
+## Workflow
+
+```text
+Raw SQLite
+    |
+    v
+Exploration notebook
+    |
+    v
+dbt staging models
+    |
+    v
+Intermediate joined model
+    |
+    +----------------------+
+    |                      |
+    v                      v
+Analytical marts       ML datasets
+    |                      |
+    v                      v
+CSV exports            Python models
+    |                      |
+    v                      v
+Looker Studio          Inference function
+```
+
+### 1. Exploration
+
+`exploration/yhp_credit_exploration.ipynb` is used to inspect the raw database, profile missingness and distributions, and identify data-quality issues.
+
+The notebook is exploratory. Production calculations are moved into dbt models once their logic is defined.
+
+### 2. dbt and DuckDB
+
+The repeatable analytical pipeline lives in `credit_dbt/`.
+
+dbt is responsible for:
+
+- typing and documenting the raw fields;
+- joining outcomes to the 99 predictors;
+- creating portfolio, time-trend, segmentation and concentration marts;
+- creating model-ready datasets for Part 2;
+- running column-level and table-level tests.
+
+DuckDB is the local analytical database. It reads the SQLite source directly, so no separate raw-data import is required.
+
+### 3. Dashboard exports
+
+The analytical marts are exported to CSV and loaded into Looker Studio.
+
+Business logic is kept in dbt rather than recreated in the dashboard. This keeps the reported metrics traceable to a version-controlled SQL model and reduces the risk of different calculations being used in different charts.
+
+---
+
+## Data model
+
+The dbt project builds **13 tables** across three layers.
 
 ### Staging
 
-| Table | Rows | Description |
-|---|---|---|
-| `stg_loans` | 10,000 | Loan outcomes, typed. Dates cast to DATE, `is_loss` to BOOLEAN. |
-| `stg_loan_features` | 10,000 | The 99 features, typed. Numerics cast to DOUBLE, categoricals to VARCHAR. |
+| Model | Rows | Purpose |
+|---|---:|---|
+| `stg_loans` | 10,000 | Types loan outcomes and converts `received_date` to a date and `is_loss` to a boolean. |
+| `stg_loan_features` | 10,000 | Types the 99 anonymised predictors. |
 
 ### Intermediate
 
-| Table | Rows | Description |
-|---|---|---|
-| `int_loans_joined` | 10,000 | One row per loan: outcome plus all 99 features. |
+| Model | Rows | Purpose |
+|---|---:|---|
+| `int_loans_joined` | 10,000 | One row per loan containing outcomes and all predictors. |
 
 ### Marts
 
-| Table | Rows | Description |
-|---|---|---|
-| `mart_portfolio_kpis` | 29 | Headline numbers for the whole book. |
-| `mart_portfolio_kpis_wide` | 1 | The same numbers, one row, one column each. For BI dashboards. |
+| Model | Rows | Purpose |
+|---|---:|---|
+| `mart_portfolio_kpis` | 29 | Long-form portfolio KPI table. |
+| `mart_portfolio_kpis_wide` | 1 | Wide-form KPI table for BI scorecards. |
 | `mart_portfolio_yearly` | 8 | Portfolio performance by year. |
-| `mart_portfolio_seasonality` | 28 | The same, by quarter within each year. |
-| `mart_risk_segmentation` | 295 | Loss outcomes per category of all 5 categorical features, all-time, against the portfolio benchmark. |
-| `mart_loss_concentration` | 2,232 | Every loss-making loan, ranked largest first, with cumulative totals. |
-| `mart_loss_concentration_summary` | 4 | Share of losses carried by the top 1%, 5%, 10% and 20% of loss-making loans. |
-| `mart_loss_severity_bands` | 5 | Loss distribution across five size bands. |
-| `mart_ml_training_set` | 10,000 | Model-ready features for Part 2a, with the train/test split and leakage guards applied. |
-| `mart_ml_severity_set` | 2,232 | Model-ready features for Part 2b. Loss-making loans only; here `loss_amount` is the target. |
+| `mart_portfolio_seasonality` | 28 | Portfolio performance by quarter within year. |
+| `mart_risk_segmentation` | 295 | Loss outcomes by category for the five categorical features, with portfolio benchmarks. |
+| `mart_loss_concentration` | 2,232 | Positive-loss loans ranked by loss size with cumulative totals. |
+| `mart_loss_concentration_summary` | 4 | Loss shares for the top 1%, 5%, 10% and 20% of positive-loss loans. |
+| `mart_loss_severity_bands` | 5 | Distribution of loss amounts across five severity bands. |
+| `mart_ml_training_set` | 10,000 | Model-ready classification dataset with chronological split and leakage controls. |
+| `mart_ml_severity_set` | 2,232 | Model-ready severity dataset containing positive-loss observations only. |
 
 ---
 
-# USER GUIDE
+# User guide
 
 ## Prerequisites
 
-1. **Python 3.12.**
-2. **The data file.** `data/` is not in git, so place the source file at:
+- Python **3.12**
+- `pip`
+- the source SQLite database
 
-   ```
-   data/YHP_credit_assessment_DS.sqlite
-   ```
+The raw data is not stored in Git. Place the assessment database at:
 
-   Nothing builds without it.
+```text
+data/YHP_credit_assessment_DS.sqlite
+```
+
+The project will not reproduce the analysis without this file.
 
 ---
 
-## Step 1 — Virtual environment
+## 1. Create and activate a virtual environment
 
-From the top folder:
+From the repository root:
 
-```bash
-source .venv/bin/activate
-```
-
-If `.venv` does not exist yet:
+### macOS / Linux
 
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
 ```
 
+### Windows
+
+```powershell
+py -m venv .venv
+.\.venv\Scripts\Activate.ps1
+```
+
+If `.venv` already exists, only activate it.
+
 ---
 
-## Step 2 — Install dependencies
-
-First run, or whenever `requirements.txt` changes:
+## 2. Install Python dependencies
 
 ```bash
 pip install -r requirements.txt
 ```
 
-Confirm with `pip list` — `dbt-core`, `dbt-duckdb` and `duckdb` should appear.
+The installed environment should include `dbt-core`, `dbt-duckdb` and `duckdb`.
 
 ---
 
-## Step 3 — Move into the dbt folder
+## 3. Build the dbt project
+
+Run dbt commands from the `credit_dbt/` directory so that the configured relative paths resolve correctly.
 
 ```bash
 cd credit_dbt
 ```
 
-All dbt commands run from inside `credit_dbt/`, not the top folder. The paths to
-the database and the SQLite file are relative, so running from elsewhere builds
-an empty database in the wrong location without reporting an error. See
-[When things go wrong](#when-things-go-wrong).
-
----
-
-## Step 4 — Install the dbt package
-
-First run only:
+Install dbt packages on the first run:
 
 ```bash
 dbt deps
 ```
 
-Downloads `dbt_utils`, used by several models and tests.
-
----
-
-## Step 5 — Check the connection
+Check the project and database connection:
 
 ```bash
 dbt debug
 ```
 
-Expect **All checks passed**.
+A correctly configured environment should finish with:
 
----
+```text
+All checks passed
+```
 
-## Step 6 — Build
+Build the full project and run its tests:
 
 ```bash
 dbt build
 ```
 
-Builds the tables, runs every test, and stops on the first failure.
+The current project contains **145 build and test nodes**. A clean run should complete without warnings or errors. If a test fails, treat the affected output as unvalidated until the underlying issue is resolved.
 
+The resulting DuckDB database is:
+
+```text
+credit_dbt/credit.duckdb
 ```
-Done. PASS=145 WARN=0 ERROR=0 SKIP=0 NO-OP=0 REUSED=0 TOTAL=145
-```
-
-145 of 145 is the expected result. Any ERROR means the output should not be
-used.
-
-The built database is `credit_dbt/credit.duckdb`.
-
-### What the tests cover
-
-Most of the 145 are column checks: unique, not null, accepted values. Seven
-check something a column test cannot see.
-
-| Test | Fault it catches |
-|---|---|
-| Row counts match between each staging table and its source | A failed cast or stray filter dropping loans on the way out of SQLite |
-| Row count matches between `int_loans_joined` and `stg_loans` | The join fanning out and multiplying rows |
-| Every `loan_id` in `stg_loans` exists in `stg_loan_features` | A loan arriving with 99 empty feature columns |
-| `mart_portfolio_yearly` totals match the loans it was built from | A `GROUP BY` dropping a whole year while every column still validates |
-| Segment and band shares sum to 1 | A share computed against the wrong denominator |
-| The concentration curve ends at exactly 1 | A window function ordered or framed wrongly |
-| The ML train/test split is chronological | A test loan leaking into the training period |
-
-Column tests ask whether a column is well formed. These ask whether the table
-still reconciles to its source.
 
 ---
 
-## Step 7 — Export to CSV
+## 4. Export the analytical marts
 
-From the top folder:
+Return to the repository root:
 
 ```bash
 cd ..
+```
+
+Run the required export scripts:
+
+```bash
 python exports/export_mart_kpis.py
 python exports/export_mart_kpis_wide.py
 python exports/export_mart_yearly.py
@@ -236,276 +257,199 @@ python exports/export_mart_concentration_summary.py
 python exports/export_mart_severity_bands.py
 ```
 
-Each script writes one CSV into `exports/`. The CSVs are copies; the database is
-the source of truth.
+Each script writes one CSV to `exports/`.
 
-| Dashboard | CSV |
+| Dashboard area | Source CSV |
 |---|---|
 | KPI scorecards | `mart_portfolio_kpis_wide.csv` |
-| 1 — time and vintage | `mart_portfolio_yearly.csv`, `mart_portfolio_seasonality.csv` |
-| 2 — risk segmentation | `mart_risk_segmentation.csv` |
-| 3 — loss concentration | `mart_loss_concentration.csv`, `mart_loss_concentration_summary.csv`, `mart_loss_severity_bands.csv` |
+| Time trend and seasonality | `mart_portfolio_yearly.csv`, `mart_portfolio_seasonality.csv` |
+| Risk segmentation | `mart_risk_segmentation.csv` |
+| Loss concentration | `mart_loss_concentration.csv`, `mart_loss_concentration_summary.csv`, `mart_loss_severity_bands.csv` |
 
-Every script sorts on the way out. For `mart_loss_concentration.csv` the order is
-load-bearing: the concentration curve is the row order, running from the largest
-loss down.
+The DuckDB marts remain the analytical source of truth. The CSV files are export copies for visualisation.
 
----
-
-## Everyday commands
-
-| Command | Effect |
-|---|---|
-| `dbt build` | Build and test everything. |
-| `dbt build --select mart_portfolio_kpis` | Build and test one model. |
-| `dbt run` | Build the tables, skip the tests. |
-| `dbt test` | Run the tests without rebuilding. |
-| `dbt build --select +mart_portfolio_kpis` | Build one model and its upstream dependencies. |
-| `dbt docs generate && dbt docs serve` | Browse every table, column and dependency. |
-
-Run all of these from inside `credit_dbt/`.
+`mart_loss_concentration.csv` is intentionally sorted from the largest loss downward because the cumulative concentration curve depends on that ordering.
 
 ---
 
-## Querying the database directly
+## 5. Query the DuckDB database directly
 
 ```python
 import duckdb
 
 con = duckdb.connect("credit_dbt/credit.duckdb", read_only=True)
-print(con.execute("select * from mart_portfolio_kpis order by kpi_display_order").df())
+
+df = con.execute(
+    """
+    select *
+    from mart_portfolio_kpis
+    order by kpi_display_order
+    """
+).df()
+
+print(df)
 ```
 
-Open with `read_only=True` unless writing. DuckDB permits one writer at a time,
-so an open notebook holding a write connection blocks `dbt build`.
+Use a read-only connection unless the task requires writing to the database. DuckDB permits a single writer, so an open write connection can block a dbt build.
 
 ---
 
-## Reading `mart_portfolio_kpis`
+## Common dbt commands
 
-This table is shaped differently from the others: **29 rows, one per number**,
-rather than one row with many columns.
+Run these from `credit_dbt/`.
+
+| Command | Purpose |
+|---|---|
+| `dbt build` | Build all selected models and run their tests. |
+| `dbt run` | Build models without running tests. |
+| `dbt test` | Run tests without rebuilding models. |
+| `dbt build --select mart_portfolio_kpis` | Build and test one model. |
+| `dbt build --select +mart_portfolio_kpis` | Build one model and its upstream dependencies. |
+| `dbt docs generate && dbt docs serve` | Generate and browse project documentation and lineage. |
+
+---
+
+## Testing and data validation
+
+The project uses standard dbt column tests alongside table-level reconciliation tests.
+
+The checks cover:
+
+- uniqueness and completeness of business keys;
+- accepted values for controlled fields;
+- row-count agreement between source, staging and joined models;
+- preservation of loan coverage through the feature join;
+- reconciliation of yearly totals to the underlying loans;
+- segment and severity-band shares summing to one;
+- the loss-concentration curve ending at one;
+- chronological integrity of the machine-learning train/test split.
+
+These tests do not prove that every analytical decision is correct. They are designed to catch common transformation, join, denominator and leakage errors before the outputs are used.
+
+---
+
+## Portfolio KPI table
+
+`mart_portfolio_kpis` is stored in long form: one row per KPI.
 
 | Column | Meaning |
 |---|---|
-| `kpi_group` | Section: `volume`, `frequency`, `severity` or `data_quality`. |
-| `kpi_name` | Name of the number, for example `portfolio_loss_rate`. |
-| `kpi_unit` | `count`, `rate`, `rate_change`, `amount` or `date`. |
-| `kpi_display_order` | Presentation order. |
-| `is_headline` | True for the 8 numbers to show first. |
-| `kpi_value` | The number. |
-| `kpi_value_text` | Dates only, which have no numeric form. |
+| `kpi_group` | KPI family: `volume`, `frequency`, `severity` or `data_quality`. |
+| `kpi_name` | Metric name. |
+| `kpi_unit` | Unit such as `count`, `rate`, `rate_change`, `amount` or `date`. |
+| `kpi_display_order` | Intended display order. |
+| `is_headline` | Identifies the headline metrics. |
+| `kpi_value` | Numeric value. |
+| `kpi_value_text` | Text representation used where a numeric value is not appropriate, such as dates. |
 
-For the short version:
+To return only the headline KPIs:
 
 ```sql
-select * from mart_portfolio_kpis where is_headline order by kpi_display_order
+select *
+from mart_portfolio_kpis
+where is_headline
+order by kpi_display_order;
 ```
 
-That returns 8 numbers instead of 29; the rest is the supporting detail.
-
-Check `kpi_unit` before formatting a value. All the numbers share one column, so
-nothing prevents a loss rate of `0.2119` being printed as $0.21. `rate_change`
-can be negative; the other units cannot.
-
-### Three caveats this table reports
-
-**1. The loss rate counts loans, not money.** The source has no loan amount
-column, so `portfolio_loss_rate` means 21.19% of loans went bad, not that 21.19%
-of the money lent was lost. The second figure cannot be derived from this data.
-
-**2. One average hides a rising trend.** The overall rate is 21.19% across eight
-years. The last 12 months of the book ran at **23.46%** against **21.91%** the
-year before.
-
-**3. Over half the rows are repeats.** `duplicate_feature_vector_rate` is
-**0.5427** — 5,427 of the 10,000 rows share their 99 feature values exactly with
-another row, leaving 7,008 distinct records. Every other number in the table,
-including the loss rate, is weighted by those repeats. This is a property of the
-source data, not the pipeline.
-
-The `data_quality` group also reports 153 loans where `is_loss` disagrees with
-`loss_amount`, and 4 loans with no loss amount. Both are surfaced rather than
-corrected.
-
-### Which "total loss" is which
-
-Three are published, differing by about $2 million:
-
-| KPI | Value (USD) | Definition |
-|---|---|---|
-| `total_recorded_loss_amount` | 68,530,441.67 | Every loss amount, net of the 197 recoveries. The headline figure. |
-| `total_positive_loss_amount` | 68,905,381.05 | Losses only, recoveries excluded. |
-| (sum over `is_loss` rows) | 66,928,268.75 | Lower, because 133 loans lost money while flagged as no loss. |
-
-All three are correct and answer different questions.
+For Looker Studio scorecards, use `mart_portfolio_kpis_wide`. Each KPI is stored in its own column, which allows percentages, currency and counts to be formatted independently.
 
 ---
 
-## Putting the KPIs on a Looker scorecard
+## Part 1: analytics and engineering
 
-Use `mart_portfolio_kpis_wide`, not `mart_portfolio_kpis`.
+Part 1 is documented in [`part1_credit_risk_analysis.pdf`](part1_credit_risk_analysis.pdf).
 
-A scorecard displays one field as one number. In the long table all 29 values sit
-in a single `kpi_value` column, so a scorecard would sum them, and every card
-would share one number format. The wide table is the same data transposed — one
-row, 29 columns — so each card points at its own field with its own type and
-formatting.
+The analysis focuses on three areas:
 
-1. Export the file:
+- change in portfolio risk over time;
+- differences in loss outcomes across available categorical segments;
+- concentration and severity of realised losses.
 
-   ```bash
-   python exports/export_mart_kpis_wide.py
-   ```
+A separate data-quality section records issues found in the raw data and explains where they affect interpretation.
 
-2. In Looker Studio, add a data source and upload the CSV (File Upload).
-
-3. Add a **Scorecard** and set the Metric, for example `portfolio_loss_rate`.
-   Aggregation is irrelevant with one row.
-
-4. Set the field format:
-
-   | Field pattern | Format |
-   |---|---|
-   | `*_rate`, `*_change` | Percent |
-   | `total_*_amount`, `average_*` | Currency (USD) |
-   | `*_count`, `*_days` | Number |
-   | `*_date` | Date |
-
-**Comparison arrow.** Set the Metric to `loss_rate_last_12_months` and the
-Comparison to `loss_rate_prior_12_months`. Looker shows 23.5% with the change
-against 21.9% beneath it. `loss_rate_12_month_change` holds the same difference
-as a standalone figure.
-
-`loss_rate_12_month_change` is the only field here that can be negative. Do not
-format it as an unsigned percent, or a year of falling losses will display as no
-change.
-
-**Panel fields** — the 8 marked `is_headline`:
-
-`funded_loan_count` · `portfolio_loss_rate` · `loss_rate_last_12_months` ·
-`loss_rate_12_month_change` · `total_recorded_loss_amount` ·
-`average_loss_per_funded_loan` · `average_loss_severity` ·
-`duplicate_feature_vector_rate`
-
-The other 21 columns remain in the file.
+The dashboard is a presentation layer. Calculations used in the report and dashboard are produced in dbt marts rather than being recreated as dashboard formulas.
 
 ---
 
-## When things go wrong
+## Part 2: predictive modelling
 
-**"All checks passed" but the tables are empty.**
-dbt was run from the top folder instead of `credit_dbt/`, creating a second,
-empty `credit.duckdb` there. Delete the stray file, `cd credit_dbt`, rebuild.
-`dbt debug` still reports success in this state, because it only opens a
-connection and never reads the SQLite file.
+Part 2 uses two models because the classification and severity targets answer different questions and require different training populations.
 
-**`Could not find adapter type ...`**
-Rarely a missing library. Usually a structural problem in the config, such as
-wrong indentation. Check `profiles.yml` before installing anything.
-
-**`IO Error: database is locked`**
-Something holds the database open for writing, usually a notebook. Close it, or
-reconnect with `read_only=True`.
-
-**A test fails after a model change.**
-The test name identifies the table, column and rule. Fix the cause rather than
-the test.
-
-**A row-count test fails.**
-The number of rows surviving a step has changed. Look for a filter added to a
-staging model, a cast producing nulls, or a join key that stopped being unique.
-None of these raise an error on their own.
-
----
-
-## Project layout
-
-```
-yhp_credit_assessment/
-├── credit_dbt/              <- run all dbt commands from here
-│   ├── models/
-│   │   ├── staging/
-│   │   ├── intermediate/
-│   │   └── marts/
-│   ├── tests/               <- table-level checks
-│   ├── macros/
-│   ├── profiles.yml         <- connection settings
-│   ├── dbt_project.yml
-│   └── credit.duckdb        <- built database (not in git)
-├── data/                    <- source SQLite file (not in git)
-├── exploration/             <- profiling notebook
-├── exports/                 <- export scripts and the CSVs
-├── modelling/               <- Part 2
-│   ├── yhp_credit_classification.ipynb   <- 2a: will it lose money?
-│   ├── yhp_credit_regression.ipynb       <- 2b: how much?
-│   ├── inference.py                      <- score a loan by loan_id
-│   ├── export_predictions.py             <- model results to CSV
-│   ├── artifacts/                        <- fitted models
-│   ├── predictions/                      <- model results
-│   └── ml_methodology.md                 <- modelling decisions and reasoning
-├── part1_credit_risk_analysis.pdf
-├── requirements.txt
-└── README.md
-```
-
-Every `.sql` model has a `.yml` beside it documenting each column and the tests
-it must pass.
-
----
-
-## Part 2 — the models
-
-Two models, one for each half of the question.
-
-| Notebook | Question | Target | Loans used |
+| Notebook | Question | Target | Population |
 |---|---|---|---|
-| `yhp_credit_classification.ipynb` | Will this loan lose money? | `is_loss` | all 10,000 |
-| `yhp_credit_regression.ipynb` | How much will it lose? | `loss_amount` | the 2,232 that lost something |
+| `yhp_credit_classification.ipynb` | Will the loan record a loss? | `is_loss` | All 10,000 loans |
+| `yhp_credit_regression.ipynb` | How large is the loss when a positive loss occurs? | `loss_amount` | 2,232 positive-loss loans |
 
-Their product is expected loss per loan, in USD:
+Expected loss is calculated as:
 
+```text
+expected loss = probability of loss × predicted loss conditional on loss
 ```
-expected loss  =  P(loss)  x  average loss when it happens
-```
 
-Run them after `dbt build`:
+### Leakage controls
+
+Feature preparation is deliberately split between dbt and the modelling notebooks.
+
+**dbt applies rules that do not need to learn from the data**, including:
+
+- removing leakage fields where required;
+- assigning the chronological train/test split;
+- grouping predefined rare categories;
+- converting known sentinel codes to null.
+
+**The notebooks fit data-dependent transformations on the training rows only**, including:
+
+- encoding;
+- imputation;
+- scaling;
+- model fitting and tuning.
+
+This separation keeps data-dependent preprocessing on the correct side of the validation split.
+
+### Run the modelling notebooks
+
+From the repository root:
 
 ```bash
 cd modelling
-jupyter notebook yhp_credit_classification.ipynb    # ~10 minutes
-jupyter notebook yhp_credit_regression.ipynb        # ~1 minute
+jupyter notebook yhp_credit_classification.ipynb
 ```
 
-The SVM tuning accounts for most of the classification runtime.
+and:
 
-Two separate tables feed them because `loss_amount` gives away the answer in the
-classifier and is the answer in the regression. Keeping them apart prevents a
-column being a feature in one model and the target in the other.
+```bash
+jupyter notebook yhp_credit_regression.ipynb
+```
 
-Feature preparation is split across two places:
+The classification notebook takes longer because of SVM tuning.
 
-- **dbt** applies the fixed rules — dropping `loss_amount`, assigning the
-  train/test split by date, grouping rare categories, nulling sentinel codes.
-  These require no knowledge of the data, so they cannot leak, and dbt tests
-  them.
-- **The notebooks** apply the fitted steps — encoding, imputation, scaling — all
-  fitted on the training rows alone.
+Detailed modelling decisions, validation choices and limitations are documented in:
 
-If a step has to learn from the data, it happens after the split, in the
-notebook.
+```text
+modelling/ml_methodology.md
+```
 
-`modelling/ml_methodology.md` documents every decision, its cost, and the
-limitations of the results.
+---
 
-### Scoring a loan
+## Inference
 
-The inference function takes a `loan_id` and returns the probability of default
-and the predicted dollar loss.
+The inference utility accepts a `loan_id`, loads the saved preprocessing and fitted models, and returns:
+
+- probability of loss;
+- predicted loss conditional on loss;
+- expected loss in USD;
+- diagnostic flags where relevant.
+
+Build and save the fitted artefacts:
 
 ```bash
 cd modelling
-python inference.py --build          # fit and save the models, ~5 seconds
+python inference.py --build
+```
+
+Score a loan:
+
+```bash
 python inference.py LRQ-100067
 ```
 
@@ -514,52 +458,166 @@ From Python:
 ```python
 from inference import predict
 
-predict("LRQ-100067")
-{'loan_id': 'LRQ-100067',
- 'probability_of_default': 0.29365,
- 'predicted_loss_given_default': 16945.21,   # USD, conditional on default
- 'expected_loss_usd': 4975.97,               # probability x the line above
- ...}
+result = predict("LRQ-100067")
+print(result)
 ```
 
-Nothing is re-fitted on a call. The models and all fitted preprocessing are saved
-once by `--build` and loaded from disk, so a call takes about 20 milliseconds.
-Re-fitting per call would change the fill values and scaling factors and shift
-every prediction.
+The model is not re-fitted for each prediction. Saved model and preprocessing artefacts are loaded from disk so that scoring uses the same transformations as model development.
 
-Two response fields are qualifiers rather than results.
-`scored_on_training_data` is true for loans the models were fitted on, where the
-prediction is optimistic. `severity_clipped` is true where the dollar figure was
-capped because the loan fell outside the range the severity model was trained on;
-it applies to about 0.6% of loans, and the uncapped predictions in those cases
-are not usable.
+Two response fields require attention:
 
-### Model results
+- `scored_on_training_data`: identifies loans that were part of model fitting, for which predictive performance will be optimistic.
+- `severity_clipped`: identifies predictions capped because the observation falls outside the range used to train the severity model. This affects approximately 0.6% of loans.
 
-The notebooks display their results inline. To produce them as files:
+---
+
+## Export model predictions
+
+To create the Part 2 output files:
 
 ```bash
 cd modelling
 python export_predictions.py
 ```
 
-This refits the tuned models at the settings the notebooks selected — it does not
-repeat the parameter searches — and writes four files to `modelling/predictions/`:
+The script refits the selected model specifications without repeating the full parameter searches and writes the following files to `modelling/predictions/`:
 
 | File | Rows | Contents |
-|---|---|---|
-| `predictions_classification.csv` | 1,963 | Per test loan: actual outcome, both models' scores, risk decile. |
-| `predictions_regression.csv` | 451 | Per loss-making test loan: actual loss, predicted loss, error. |
-| `model_comparison_classification.csv` | 4 | Metrics for the four classifiers. |
-| `model_comparison_regression.csv` | 4 | Metrics for the regression models. |
+|---|---:|---|
+| `predictions_classification.csv` | 1,963 | Test-loan outcomes, model scores and risk deciles. |
+| `predictions_regression.csv` | 451 | Actual and predicted losses for positive-loss test loans. |
+| `model_comparison_classification.csv` | 4 | Classification model comparison metrics. |
+| `model_comparison_regression.csv` | 4 | Regression model comparison metrics. |
 
-Runtime is about three minutes, almost all of it the SVM fit.
+In the current classification results, the riskiest test decile has a **33.2%** observed loss rate compared with **12.1%** in the safest decile, a **2.7×** spread. The reported ROC-AUC is **0.61**. This indicates modest discrimination: the model is more suitable for relative risk ranking than as a standalone underwriting rule.
 
-These files sit in `modelling/predictions/` rather than `exports/`. `exports/`
-holds dbt tables copied out unchanged, so every file there traces back to a
-tested model; model predictions depend on a fitted model as well as the data.
+---
 
-Ranking quality is clearest in the `risk_decile` column: decile 1 is the riskiest
-tenth of test loans at a 33.2% actual loss rate, decile 10 the safest at 12.1%.
-A 2.7× spread. The ROC-AUC of 0.61 is modest, but separation of that size is
-usable for prioritisation.
+## Data-quality findings and interpretation
+
+Several source-data issues are deliberately retained and reported.
+
+### Loss label and amount do not always agree
+
+The data-quality mart reports **153 loans** where `is_loss` and `loss_amount` disagree, plus **4 loans** with no recorded loss amount.
+
+The pipeline does not silently overwrite these records because there is no source-system information available to determine which field is authoritative.
+
+### Duplicate feature vectors
+
+**5,427 of 10,000 rows** share their complete 99-feature vector with at least one other row. This leaves **7,008 distinct feature records**.
+
+Portfolio metrics remain weighted by the original loan rows. The duplication rate should therefore be considered when interpreting both descriptive and predictive results.
+
+### Loss rate is count-based
+
+The dataset does not contain a loan principal or funded exposure amount. A portfolio loss rate such as **21.19%** therefore means the percentage of loans that recorded a loss, not the percentage of dollars lent that were lost.
+
+An exposure-weighted default or loss rate cannot be derived from the available fields.
+
+### Multiple valid definitions of total loss
+
+The repository reports different loss totals where the definitions answer different questions.
+
+| Measure | USD | Definition |
+|---|---:|---|
+| `total_recorded_loss_amount` | 68,530,441.67 | Net recorded loss amount, including negative recoveries. |
+| `total_positive_loss_amount` | 68,905,381.05 | Positive losses only. |
+| Sum of `loss_amount` where `is_loss = 1` | 66,928,268.75 | Label-restricted total; lower because some positive loss amounts occur on records with `is_loss = 0`. |
+
+The analysis uses named measures rather than treating these values as interchangeable.
+
+---
+
+## Assumptions and limitations
+
+1. **The source fields are taken as provided.** Data-quality conflicts are surfaced rather than repaired without supporting information.
+2. **Portfolio loss rates are loan-count based.** The source does not include funded exposure, so amount-weighted risk measures are unavailable.
+3. **The predictors are anonymised.** Statistical associations can be measured, but most feature-level findings cannot be translated into specific borrower or product characteristics.
+4. **Duplicate feature vectors remain in the analytical population.** This preserves the source portfolio weighting but can affect model training and interpretation.
+5. **Model performance is not production-grade evidence.** The current classifier has modest discrimination and should be read as a take-home modelling exercise, not a deployed credit decision system.
+6. **Inference flags training observations and clipped severity estimates.** These outputs should not be interpreted in the same way as clean out-of-sample predictions.
+
+---
+
+## Repository structure
+
+```text
+yhp_credit_assessment/
+├── credit_dbt/                         # dbt project
+│   ├── models/
+│   │   ├── staging/
+│   │   ├── intermediate/
+│   │   └── marts/
+│   ├── tests/                          # table-level checks
+│   ├── macros/
+│   ├── profiles.yml
+│   ├── dbt_project.yml
+│   └── credit.duckdb                   # generated; not stored in Git
+├── data/
+│   └── YHP_credit_assessment_DS.sqlite # source data; not stored in Git
+├── exploration/
+│   └── yhp_credit_exploration.ipynb
+├── exports/                            # dbt mart export scripts and CSVs
+├── modelling/
+│   ├── yhp_credit_classification.ipynb
+│   ├── yhp_credit_regression.ipynb
+│   ├── inference.py
+│   ├── export_predictions.py
+│   ├── artifacts/
+│   ├── predictions/
+│   └── ml_methodology.md
+├── part1_credit_risk_analysis.pdf
+├── requirements.txt
+└── README.md
+```
+
+Each SQL model is documented in the dbt project alongside its associated tests.
+
+---
+
+## Troubleshooting
+
+### `dbt debug` succeeds but the expected data is not available
+
+Confirm that:
+
+- the SQLite file exists at `data/YHP_credit_assessment_DS.sqlite`;
+- dbt is being run from `credit_dbt/`;
+- the paths in `profiles.yml` resolve to the intended SQLite and DuckDB files.
+
+### `Could not find adapter type ...`
+
+Check the virtual environment and `profiles.yml` first:
+
+```bash
+pip list
+dbt debug
+```
+
+`dbt-core` and `dbt-duckdb` should both be installed.
+
+### `IO Error: database is locked`
+
+Another process is holding a write connection to DuckDB, commonly an open notebook or Python session. Close that connection or reopen it with:
+
+```python
+duckdb.connect("credit_dbt/credit.duckdb", read_only=True)
+```
+
+### A dbt test fails after changing a model
+
+Read the failing test name and inspect the affected transformation. Row-count failures usually indicate that a filter, cast or join has changed the number of loans moving through the pipeline.
+
+Fix the transformation or its documented assumption rather than disabling the test to force a green build.
+
+---
+
+## Use of AI-assisted development tools
+
+AI assistants were used during development, as permitted by the assessment brief.
+
+- **Claude Code** was used for codebase-aware implementation support and debugging.
+- **ChatGPT** was used for general research and discussion.
+
+The reproducible logic, validation checks, documented methodology and outputs remain in this repository so that the work can be inspected and rerun independently of those tools.

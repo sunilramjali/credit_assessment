@@ -1,0 +1,90 @@
+version: 2
+
+models:
+  - name: mart_ml_training_set
+    description: >
+      Model-ready feature table for the is_loss classifier. One row represents
+      one funded loan. 10,000 rows and 122 columns.
+
+      This model applies only transformations that are fixed rules, meaning
+      steps that need no knowledge of the data to carry out and therefore
+      cannot move information from the test set into training. Anything that
+      must be fitted, such as imputation, encoding and scaling, is deliberately
+      left to the notebook, where it is fitted on the training rows alone.
+
+      Four rules are applied here.
+
+      First, loss_amount is dropped completely. It is near-deterministic with
+      the target, holding for 9,847 of 10,000 rows, so leaving it in means a
+      careless select of every column trains on the answer. The guard belongs
+      in the schema rather than in a line of notebook code that anyone could
+      delete.
+
+      Second, the split is assigned by date rather than at random. 54.3% of
+      rows are byte-identical duplicates of another row and every duplicate
+      group shares a received_date, so a random split would place identical
+      records on both sides and the test score would measure memorisation. None
+      of the 2,435 duplicate groups straddle the cutoff.
+
+      Third, feat_001 categories holding fewer than 100 loans collapse into a
+      single OTHER category. The counts behind that decision are taken from the
+      training rows only, because using the whole dataset to decide the
+      encoding would let the test set influence it. 19 categories survive, plus
+      OTHER.
+
+      Fourth, sentinel codes become NULL and each affected column gains an
+      is_unobserved indicator. The codes are placeholders for "no observation",
+      so leaving them as numbers makes every mean, distance and coefficient
+      involving those columns wrong; dropping them without an indicator would
+      throw away the fact that an observation was missing, which may itself
+      separate risk.
+
+      Duplicate rows are retained. The time split already blocks the leak, and
+      removing rows the source supplied would make the evaluation set stop
+      matching the real book. The cost is that a repeated record carries extra
+      weight during training, which must be stated alongside any result.
+
+    config:
+      materialized: table
+
+    columns:
+      - name: loan_id
+        description: "Unique business identifier. Never used as a feature."
+        data_tests:
+          - unique
+          - not_null
+
+      - name: split
+        description: >
+          train for loans received before the cutoff, test for the rest.
+          8,037 train rows at a 20.60% base rate, 1,963 test rows at 23.59%.
+          The base rates differ because the population is not stationary, which
+          is a genuine property of the book rather than a sampling fault.
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [train, test]
+
+      - name: is_loss
+        description: >
+          Target variable. True where the loan recorded a material credit loss,
+          exactly as supplied. The 153 known label conflicts are left in place.
+        data_tests:
+          - not_null
+
+      - name: received_date
+        description: >
+          Retained so model errors can be analysed by vintage. Must not be used
+          as a predictor: it defines the split, so a model given it can learn
+          the split boundary itself.
+        data_tests:
+          - not_null
+
+      - name: feat_001_grouped
+        description: >
+          feat_001 with categories below 100 training loans collapsed to OTHER.
+          20 distinct values. Reduces one-hot width from 232 columns to 20 and
+          means every resulting column has enough rows to carry a signal.
+        data_tests:
+          - not_null

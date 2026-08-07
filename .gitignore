@@ -2,6 +2,7 @@
 data/
 .venv/
 .claude/
+exports/
 
 # dbt project
 target/

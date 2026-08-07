@@ -1,5 +1,14 @@
 # YHP Credit Assessment
 
+I started this project in a Jupyter notebook, exploring the raw data
+to see what was actually in it. Once I understood the data, I decided on the
+architecture and the method, and then built the pipeline. Along the way I used
+Claude Code as a coding assistant — coding efficiency & debugging with the whole project
+in context — and ChatGPT for general research.
+
+**Live dashboard:** https://datastudio.google.com/s/taLG52JGGKY
+
+
 ## What this project is
 
 This project takes a raw loan dataset and turns it into a small set of clean,
@@ -23,6 +32,46 @@ is no separate import step and no copy of the data to keep in sync.
 
 Every number this project publishes comes out of a tested table. If a number is
 wrong, a test fails and the build stops.
+
+---
+
+## How the project fits together
+
+The work moves through three stages. Each stage has one job, and each one hands
+its output to the next.
+
+```
+   ┌─────────────┐      ┌──────────────────┐      ┌────────────────┐
+   │  NOTEBOOK   │ ───► │  dbt  +  DuckDB  │ ───► │ LOOKER STUDIO  │
+   │             │      │                  │      │                │
+   │   explore   │      │  build  &  test  │      │      show      │
+   └─────────────┘      └──────────────────┘      └────────────────┘
+    exploration/           credit_dbt/               exports/*.csv
+     one-off,              repeatable,               read-only,
+     throwaway             tested                    no logic
+```
+
+**1. Notebook — explore.** `exploration/yhp_credit_exploration.ipynb` opens the
+raw SQLite file and asks questions of it: what columns exist, what is missing,
+what looks wrong. This is where the understanding comes from. Nothing here is
+part of the pipeline — it is thinking out loud, and it does not need to run
+again.
+
+**2. dbt + DuckDB — build and test.** Everything the notebook found that turned
+out to be true gets written down as a model in `credit_dbt/`. dbt writes the
+SQL, builds the tables in layers (staging → intermediate → marts), and runs a
+test after every one. This is the only place where a number is calculated. Run
+`dbt build` and you get the same tables every time.
+
+**3. Looker Studio — show.** The marts are exported to CSV and uploaded to
+Looker, which draws the charts. Looker does **no** calculation: no custom
+formulas, no blended fields, no filters that change a number. If a figure on a
+dashboard looks wrong, the fix belongs in a dbt model, not in Looker.
+
+The rule that holds this together: **calculation happens in one place only.**
+The notebook is where you find things out, dbt is where you make them true, and
+Looker is where you show them. Push logic backwards down the arrow, never
+forwards.
 
 ---
 

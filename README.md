@@ -5,7 +5,7 @@ This repository contains an end-to-end credit risk analysis of an anonymised sma
 The work is split into two parts:
 
 1. **Analytics and data engineering** — profile the portfolio, identify three business-relevant findings, surface data-quality issues, and build repeatable transformations.
-2. **Predictive modelling** — estimate the probability that a funded loan ends in loss and the size of the loss when it occurs, then expose those predictions through a small inference function.
+2. **Predictive modelling** — estimate the probability that a funded loan ends in loss and the size of the loss when it occurs, then showcase those predictions through a small inference function.
 
 The analytical pipeline is built with **dbt** and **DuckDB**. Initial exploration is carried out in Python, and the published Part 1 charts are produced in **Looker Studio** from exported dbt marts.
 

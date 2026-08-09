@@ -351,8 +351,6 @@ where is_headline
 order by kpi_display_order;
 ```
 
-For Looker Studio scorecards, use `mart_portfolio_kpis_wide`. Each KPI is stored in its own column, which allows percentages, currency and counts to be formatted independently.
-
 ---
 
 ## Part 1: analytics and engineering
